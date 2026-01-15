@@ -1,6 +1,0 @@
-Prompt from January 14th, 2026
-
-Please investigate project and resolve the error "Message: No loaders are registered for type com.dfsek.terra.api.noise.NoiseSampler" which is issued when starting the compiled program with "StartNoiseTool.bat".  Note this project can be recompiled with "gradlew.bat" and is forked from "https://github.com/PolyhedralDev/NoiseTool".
-
-After fixing:
-Addons ideally would also be imported and compiled into jar file itself instead of requiring additional "Addons" in the root folder.  These are the same addons used in "C:\Projects\BiomeTool" which currently appears to be pulling them from local maven, but they apparently are also available on solo maven, it appears here: "https://maven.solo-studios.ca/#/releases/com/dfsek"
