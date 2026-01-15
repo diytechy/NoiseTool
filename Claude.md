@@ -1,3 +1,5 @@
+Prompt from January 14th, 2026
+
 Please investigate project and resolve the error "Message: No loaders are registered for type com.dfsek.terra.api.noise.NoiseSampler" which is issued when starting the compiled program with "StartNoiseTool.bat".  Note this project can be recompiled with "gradlew.bat" and is forked from "https://github.com/PolyhedralDev/NoiseTool".
 
 After fixing:
