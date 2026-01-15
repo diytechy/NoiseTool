@@ -3,7 +3,7 @@ package com.dfsek.noise.swing;
 import com.dfsek.noise.platform.DummyPack;
 import com.dfsek.tectonic.yaml.YamlConfiguration;
 import com.dfsek.terra.api.Platform;
-import com.dfsek.terra.api.noise.NoiseSampler;
+import com.dfsek.seismic.type.sampler.Sampler;
 import com.dfsek.terra.api.util.collection.ProbabilityCollection;
 import com.dfsek.terra.api.util.mutable.MutableBoolean;
 import net.worldsynth.glpreview.heightmap.Heightmap3DGLPreviewBufferedGL;
@@ -35,7 +35,7 @@ public class NoisePanel extends JPanel {
     private final MutableBoolean moved;
     private BufferedImage render;
 
-    private NoiseSampler noiseSeeded;
+    private Sampler noiseSeeded;
     private ProbabilityCollection<Integer> colorCollection;
     private final Platform platform;
 
@@ -169,7 +169,7 @@ public class NoisePanel extends JPanel {
         this.error.set(true);
         try {
             DummyPack pack = new DummyPack(platform, new YamlConfiguration(this.textArea.getText(), "Noise Config"), this.settingsPanel.isUseLetExpressions());
-            this.noiseSeeded = pack.getNoiseSampler();
+            this.noiseSeeded = pack.getSampler();
             this.error.set(false);
         } catch (Exception e) {
             e.printStackTrace();
@@ -198,7 +198,7 @@ public class NoisePanel extends JPanel {
         double[][] noiseVals = new double[sizeX][sizeZ];
         for (int x = 0; x < noiseVals.length; x++) {
             for (int z = 0; z < (noiseVals[x]).length; z++) {
-                double n = noiseSeeded.noise(seed, x + originX, z + originZ);
+                double n = noiseSeeded.getSample(seed, x + originX, z + originZ);
                 noiseVals[x][z] = n;
             }
         }
@@ -217,7 +217,7 @@ public class NoisePanel extends JPanel {
         for (int x = 0; x < noiseVals.length; x++) {
             for (int y = 0; y < noiseVals[x].length; y++) {
                 for(int z = 0; z < (noiseVals[x][y]).length; z++) {
-                    double n = noiseSeeded.noise(seed, x + originX, y + sampleYMin, z + originZ);
+                    double n = noiseSeeded.getSample(seed, x + originX, y + sampleYMin, z + originZ);
                     noiseVals[x][y][z] = n > 0;
                 }
             }
@@ -239,7 +239,7 @@ public class NoisePanel extends JPanel {
         long startTime = System.nanoTime();
         for (int x = 0; x < noiseVals.length; x++) {
             for (int z = 0; z < (noiseVals[x]).length; z++) {
-                double n = noiseSeeded.noise(seed, x + originX, z + originZ);
+                double n = noiseSeeded.getSample(seed, x + originX, z + originZ);
                 noiseVals[x][z] = n;
             }
         }
