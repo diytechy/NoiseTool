@@ -1,0 +1,12 @@
+type: "DOMAIN_WARP"
+amplitude: 10
+warp:
+  type: "OPEN_SIMPLEX_2S"
+  frequency: 0.01
+sampler:
+  type: "FBM"
+  octaves: 4
+  sampler:
+    type: "CELLULAR"
+    return: "CellValue"
+    frequency: 0.01
