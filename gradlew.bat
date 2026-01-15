@@ -74,7 +74,7 @@ set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
 
 
 if "%~1"=="" (
-	set "args=--refresh-dependencies shadowJar"
+	set "args=build"
 ) else (
 	set "args=%*"
 )
