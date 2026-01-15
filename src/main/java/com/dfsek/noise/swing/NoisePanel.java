@@ -87,9 +87,10 @@ public class NoisePanel extends JPanel {
                             moved.set(false);
                             int deltaX = e.getXOnScreen() - screenX;
                             int deltaY = e.getYOnScreen() - screenY;
+                            int multiplier = settingsPanel.getPerspectiveMultiplier();
 
-                            settingsPanel.setOriginX(settingsPanel.getOriginX() - deltaX);
-                            settingsPanel.setOriginZ(settingsPanel.getOriginZ() - deltaY);
+                            settingsPanel.setOriginX(settingsPanel.getOriginX() - deltaX * multiplier);
+                            settingsPanel.setOriginZ(settingsPanel.getOriginZ() - deltaY * multiplier);
                             NoisePanel.this.update();
                         }
                     }
@@ -120,7 +121,8 @@ public class NoisePanel extends JPanel {
 
                     @Override
                     public void mouseMoved(MouseEvent e) {
-                        statusBar.setCoordinates((int) (e.getX() + settingsPanel.getOriginX()), (int) (e.getY() + settingsPanel.getOriginZ()));
+                        int multiplier = settingsPanel.getPerspectiveMultiplier();
+                        statusBar.setCoordinates((int) (e.getX() * multiplier + settingsPanel.getOriginX()), (int) (e.getY() * multiplier + settingsPanel.getOriginZ()));
                     }
                 });
             }
@@ -194,11 +196,12 @@ public class NoisePanel extends JPanel {
         int sizeZ = getHeight();
         double originX = this.settingsPanel.getOriginX();
         double originZ = this.settingsPanel.getOriginZ();
+        int multiplier = this.settingsPanel.getPerspectiveMultiplier();
 
         double[][] noiseVals = new double[sizeX][sizeZ];
         for (int x = 0; x < noiseVals.length; x++) {
             for (int z = 0; z < (noiseVals[x]).length; z++) {
-                double n = noiseSeeded.getSample(seed, x + originX, z + originZ);
+                double n = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
                 noiseVals[x][z] = n;
             }
         }
@@ -208,6 +211,7 @@ public class NoisePanel extends JPanel {
     private boolean[][][] getNoiseVals3d(long seed) {
         double originX = this.settingsPanel.getOriginX();
         double originZ = this.settingsPanel.getOriginZ();
+        int multiplier = this.settingsPanel.getPerspectiveMultiplier();
 
         int sampleRes = this.settingsPanel.getVoxelResolution();
         int sampleYMin = this.settingsPanel.getVoxelBottomY();
@@ -217,7 +221,7 @@ public class NoisePanel extends JPanel {
         for (int x = 0; x < noiseVals.length; x++) {
             for (int y = 0; y < noiseVals[x].length; y++) {
                 for(int z = 0; z < (noiseVals[x][y]).length; z++) {
-                    double n = noiseSeeded.getSample(seed, x + originX, y + sampleYMin, z + originZ);
+                    double n = noiseSeeded.getSample(seed, x * multiplier + originX, y + sampleYMin, z * multiplier + originZ);
                     noiseVals[x][y][z] = n > 0;
                 }
             }
@@ -232,6 +236,7 @@ public class NoisePanel extends JPanel {
         int sizeY = getHeight();
         double originX = this.settingsPanel.getOriginX();
         double originZ = this.settingsPanel.getOriginZ();
+        int multiplier = this.settingsPanel.getPerspectiveMultiplier();
         BufferedImage image = new BufferedImage(sizeX, sizeY, BufferedImage.TYPE_INT_ARGB);
         double[][] noiseVals = new double[sizeX][sizeY];
 
@@ -239,7 +244,7 @@ public class NoisePanel extends JPanel {
         long startTime = System.nanoTime();
         for (int x = 0; x < noiseVals.length; x++) {
             for (int z = 0; z < (noiseVals[x]).length; z++) {
-                double n = noiseSeeded.getSample(seed, x + originX, z + originZ);
+                double n = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
                 noiseVals[x][z] = n;
             }
         }
@@ -260,7 +265,7 @@ public class NoisePanel extends JPanel {
         for (int x = 0; x < noiseVals.length; x++) {
             for (int z = 0; z < (noiseVals[x]).length; z++) {
                 if (colorCollection != null) {
-                    image.setRGB(x, z, colorCollection.get(noiseSeeded, x + originX, z + originZ, seed) - 16777216);
+                    image.setRGB(x, z, colorCollection.get(noiseSeeded, x * multiplier + originX, z * multiplier + originZ, seed) - 16777216);
                 } else {
                     image.setRGB(x, z, this.settingsPanel.getColorScale().valueToIRgb(noiseVals[x][z], min, max));
                 }

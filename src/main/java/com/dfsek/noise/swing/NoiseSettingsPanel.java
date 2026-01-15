@@ -14,6 +14,7 @@ public class NoiseSettingsPanel extends JPanel {
     private final JSpinner seedSpinner = new JSpinner(new SpinnerNumberModel(2403, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
     private final JSpinner xOrigin = new JSpinner(new SpinnerNumberModel(0, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
     private final JSpinner zOrigin = new JSpinner(new SpinnerNumberModel(0, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
+    private final JSpinner perspectiveMultiplier = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
 
     private final JCheckBox useLetExpressions = new JCheckBox();
 
@@ -48,6 +49,9 @@ public class NoiseSettingsPanel extends JPanel {
         add(xOrigin);
         add(new JLabel("Z Origin: "));
         add(zOrigin);
+
+        add(new JLabel("Perspective Multiplier: "));
+        add(perspectiveMultiplier);
 
         add(new JLabel("Use Let Expressions: "));
         add(useLetExpressions);
@@ -116,7 +120,7 @@ public class NoiseSettingsPanel extends JPanel {
             }
         });
 
-        SwingUtils.makeCompactGrid(this, 10, 2, 10, 10, 10, 10);
+        SwingUtils.makeCompactGrid(this, 11, 2, 10, 10, 10, 10);
 
     }
 
@@ -139,6 +143,10 @@ public class NoiseSettingsPanel extends JPanel {
 
     public void setOriginZ(double z) {
         zOrigin.setValue(z);
+    }
+
+    public int getPerspectiveMultiplier() {
+        return ((Number) perspectiveMultiplier.getValue()).intValue();
     }
 
     public boolean isUseLetExpressions() {
