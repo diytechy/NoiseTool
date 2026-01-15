@@ -21,7 +21,7 @@ jobs:
         with:
           # Specifies arguments for Gradle execution
           # If arguments is missing or empty, then Gradle is not executed
-          arguments: build
+          arguments: shadowjar
           # arguments can be multi-line for better readability
           # arguments: |
           #  --no-paralell
