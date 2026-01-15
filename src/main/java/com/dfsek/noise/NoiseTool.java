@@ -9,7 +9,7 @@ import com.dfsek.noise.swing.StatusBar;
 import com.dfsek.noise.swing.actions.*;
 import com.dfsek.tectonic.api.config.template.object.ObjectTemplate;
 import com.dfsek.tectonic.yaml.YamlConfiguration;
-import com.dfsek.terra.api.noise.NoiseSampler;
+import com.dfsek.seismic.type.sampler.Sampler;
 import com.dfsek.terra.api.registry.Registry;
 import com.dfsek.terra.api.util.reflection.TypeKey;
 import com.formdev.flatlaf.FlatDarculaLaf;
@@ -55,7 +55,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
     private FindToolBar findToolBar;
     private ReplaceToolBar replaceToolBar;
 
-    private static final TypeKey<Supplier<ObjectTemplate<NoiseSampler>>> NOISE_REGISTRY_KEY = new TypeKey<>() {};
+    private static final TypeKey<Supplier<ObjectTemplate<Sampler>>> NOISE_REGISTRY_KEY = new TypeKey<>() {};
 
 
     private NoiseTool() throws IOException {
@@ -186,7 +186,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
         });
     }
 
-    private CompletionProvider createCompletionProvider(Registry<Supplier<ObjectTemplate<NoiseSampler>>> registry) {
+    private CompletionProvider createCompletionProvider(Registry<Supplier<ObjectTemplate<Sampler>>> registry) {
         DefaultCompletionProvider noiseTypeProvider = new DefaultCompletionProvider();
         noiseTypeProvider.setAutoActivationRules(true, null);
 

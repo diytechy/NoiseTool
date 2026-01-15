@@ -20,7 +20,6 @@ package com.dfsek.noise.platform;
 import ca.solostudios.strata.Versions;
 import ca.solostudios.strata.version.Version;
 import ca.solostudios.strata.version.VersionRange;
-import com.dfsek.paralithic.eval.parser.Parser;
 import com.dfsek.paralithic.eval.parser.Parser.ParseOptions;
 import com.dfsek.tectonic.api.TypeRegistry;
 import com.dfsek.tectonic.api.config.Configuration;
@@ -33,10 +32,9 @@ import com.dfsek.terra.api.Platform;
 import com.dfsek.terra.api.addon.BaseAddon;
 import com.dfsek.terra.api.config.ConfigPack;
 import com.dfsek.terra.api.config.ConfigType;
-import com.dfsek.terra.api.config.Loader;
 import com.dfsek.terra.api.event.events.config.pack.ConfigPackPostLoadEvent;
 import com.dfsek.terra.api.event.events.config.pack.ConfigPackPreLoadEvent;
-import com.dfsek.terra.api.noise.NoiseSampler;
+import com.dfsek.seismic.type.sampler.Sampler;
 import com.dfsek.terra.api.properties.Context;
 import com.dfsek.terra.api.registry.CheckedRegistry;
 import com.dfsek.terra.api.registry.OpenRegistry;
@@ -48,19 +46,16 @@ import com.dfsek.terra.api.util.reflection.TypeKey;
 import com.dfsek.terra.api.world.biome.generation.BiomeProvider;
 import com.dfsek.terra.api.world.chunk.generation.stage.GenerationStage;
 import com.dfsek.terra.api.world.chunk.generation.util.provider.ChunkGeneratorProvider;
-import com.dfsek.terra.config.fileloaders.FolderLoader;
 import com.dfsek.terra.config.loaders.GenericTemplateSupplierLoader;
-import com.dfsek.terra.config.loaders.config.BufferedImageLoader;
 import com.dfsek.terra.registry.CheckedRegistryImpl;
 import com.dfsek.terra.registry.OpenRegistryImpl;
 import com.dfsek.terra.registry.ShortcutHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.image.BufferedImage;
-import java.io.File;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,7 +63,7 @@ import java.util.function.Supplier;
 
 
 /**
- * Represents a Terra configuration pack.
+ * Represents a Terra configuration pack for noise tool.
  */
 public class DummyPack implements ConfigPack {
     private final Context context = new Context();
@@ -84,14 +79,11 @@ public class DummyPack implements ConfigPack {
 
     private final RegistryKey key;
 
-    private final Loader loader;
-
-    private final NoiseSampler noiseSampler;
+    private final Sampler noiseSampler;
 
     private final boolean useLetExpressions;
 
     public DummyPack(Platform platform, Configuration noise, boolean useLetExpressions) {
-        this.loader = new FolderLoader(new File(".").toPath());
         this.useLetExpressions = useLetExpressions;
 
         register(selfLoader);
@@ -117,12 +109,12 @@ public class DummyPack implements ConfigPack {
 
         platform.getEventManager().callEvent(new ConfigPackPostLoadEvent(this, template -> selfLoader.load(template, noise)));
 
-        ObjectTemplate<NoiseSampler> noiseSamplerObjectTemplate = new ObjectTemplate<>() {
+        ObjectTemplate<Sampler> noiseSamplerObjectTemplate = new ObjectTemplate<>() {
             @Value(".")
-            private NoiseSampler value;
+            private Sampler value;
 
             @Override
-            public NoiseSampler get() {
+            public Sampler get() {
                 return value;
             }
         };
@@ -130,7 +122,7 @@ public class DummyPack implements ConfigPack {
         this.noiseSampler = selfLoader.load(noiseSamplerObjectTemplate, noise).get();
     }
 
-    public NoiseSampler getNoiseSampler() {
+    public Sampler getSampler() {
         return noiseSampler;
     }
 
@@ -150,9 +142,8 @@ public class DummyPack implements ConfigPack {
 
     @Override
     public void register(TypeRegistry registry) {
-        registry.registerLoader(BufferedImage.class, new BufferedImageLoader(loader, this));
         registryMap.forEach(registry::registerLoader);
-        shortcuts.forEach(registry::registerLoader); // overwrite with delegated shortcuts if present
+        shortcuts.forEach(registry::registerLoader);
     }
 
     @Override
@@ -181,12 +172,12 @@ public class DummyPack implements ConfigPack {
 
             if (typeKey.getType() instanceof ParameterizedType param) {
                 Type base = param.getRawType();
-                if (base instanceof Class  // should always be true but we'll check anyways
-                        && Supplier.class.isAssignableFrom((Class<?>) base)) { // If it's a supplier
-                    Type supplied = param.getActualTypeArguments()[0]; // Grab the supplied type
+                if (base instanceof Class
+                        && Supplier.class.isAssignableFrom((Class<?>) base)) {
+                    Type supplied = param.getActualTypeArguments()[0];
                     if (supplied instanceof ParameterizedType suppliedParam) {
                         Type suppliedBase = suppliedParam.getRawType();
-                        if (suppliedBase instanceof Class // should always be true but we'll check anyways
+                        if (suppliedBase instanceof Class
                                 && ObjectTemplate.class.isAssignableFrom((Class<?>) suppliedBase)) {
                             Type templateType = suppliedParam.getActualTypeArguments()[0];
                             GenericTemplateSupplierLoader<?> loader = new GenericTemplateSupplierLoader<>(
@@ -209,8 +200,8 @@ public class DummyPack implements ConfigPack {
     }
 
     @Override
-    public Loader getLoader() {
-        return loader;
+    public Path getRootPath() {
+        return Path.of(".");
     }
 
     @Override
