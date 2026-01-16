@@ -31,8 +31,10 @@ public class NoisePanel extends JPanel {
     private final MutableBoolean chunk = new MutableBoolean();
 
     private final NoiseSettingsPanel settingsPanel;
+    private final StatusBar statusBar;
     private final MutableBoolean error;
     private final MutableBoolean moved;
+    private final MutableBoolean freshRender;
     private BufferedImage render;
 
     private Sampler noiseSeeded;
@@ -46,11 +48,14 @@ public class NoisePanel extends JPanel {
         this.statisticsPanel = statisticsPanel;
         this.distributionPanel = distributionPanel;
         this.settingsPanel = settingsPanel;
+        this.statusBar = statusBar;
         this.platform = platform;
         this.image = new JLabel();
         this.error = new MutableBoolean();
         this.moved = new MutableBoolean();
+        this.freshRender = new MutableBoolean();
         this.moved.set(false);
+        this.freshRender.set(false);
         error.set(false);
         add(new JPanel() {
             private volatile int screenX;
@@ -183,6 +188,26 @@ public class NoisePanel extends JPanel {
         }
     }
 
+    public void renderAsync() {
+        // Show "Rendering..." message immediately
+        this.image.setIcon(new TextIcon(this, "Rendering..."));
+        this.freshRender.set(true);
+
+        // Force immediate repaint so the "Rendering..." message is visible
+        this.image.paintImmediately(this.image.getBounds());
+
+        final long startTime = System.nanoTime();
+
+        reload();
+        update();
+
+        // Calculate and display total render time
+        long endTime = System.nanoTime();
+        double totalTimeMs = (endTime - startTime) / 1000000.0D;
+        statusBar.setRenderTime(totalTimeMs);
+        freshRender.set(false);
+    }
+
     public BufferedImage getRender() {
         return this.render;
     }
@@ -288,6 +313,7 @@ public class NoisePanel extends JPanel {
         this.statisticsPanel.setText("min: " + min + "\nmax: " + max + "\nseed: " + seed + "\ntime: " + timeMs + "ms");
         this.distributionPanel.update(buckets);
         System.out.println("Rendered " + (sizeX * sizeY) + " points in " + timeMs + "ms.");
+
         return image;
     }
 }

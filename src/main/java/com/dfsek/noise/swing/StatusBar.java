@@ -12,6 +12,7 @@ public class StatusBar extends JPanel {
 
     private final JLabel label;
     private final JLabel coordinatesLabel;
+    private final JLabel renderTimeLabel;
 
     public StatusBar() {
         setLayout(new BorderLayout());
@@ -26,6 +27,11 @@ public class StatusBar extends JPanel {
         // Create grouping for components on the right side
         JPanel rightGroup = new JPanel(new FlowLayout());
         add(rightGroup, BorderLayout.LINE_END);
+
+        renderTimeLabel = new JLabel("");
+        rightGroup.add(renderTimeLabel);
+
+        rightGroup.add(Box.createHorizontalStrut(20));
 
         coordinatesLabel = new JLabel("Coordinates");
         rightGroup.add(coordinatesLabel);
@@ -43,5 +49,9 @@ public class StatusBar extends JPanel {
 
     public void clearCoordinates() {
         coordinatesLabel.setText(" ");
+    }
+
+    public void setRenderTime(double timeMs) {
+        renderTimeLabel.setText(String.format("Render: %.2fms", timeMs));
     }
 }

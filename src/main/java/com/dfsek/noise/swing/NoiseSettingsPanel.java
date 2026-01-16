@@ -14,7 +14,7 @@ public class NoiseSettingsPanel extends JPanel {
     private final JSpinner seedSpinner = new JSpinner(new SpinnerNumberModel(2403, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
     private final JSpinner xOrigin = new JSpinner(new SpinnerNumberModel(0, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
     private final JSpinner zOrigin = new JSpinner(new SpinnerNumberModel(0, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
-    private final JSpinner perspectiveMultiplier = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
+    private final JSpinner perspectiveMultiplier = new JSpinner(new SpinnerNumberModel(20, 1, 100, 1));
 
     private final JCheckBox useLetExpressions = new JCheckBox();
 

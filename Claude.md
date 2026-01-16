@@ -4,3 +4,10 @@ Please investigate project and resolve the error "Message: No loaders are regist
 
 After fixing:
 Addons ideally would also be imported and compiled into jar file itself instead of requiring additional "Addons" in the root folder.  These are the same addons used in "C:\Projects\BiomeTool" which currently appears to be pulling them from local maven, but they apparently are also available on solo maven, it appears here: "https://maven.solo-studios.ca/#/releases/com/dfsek"
+
+################################################3
+
+Please update this tool to make the following improvements:
+
+1. When "Render" is triggered through the menu or via F5, first clear the render screen / show black or another populated image or a loading circle so the user knows a new render is in progress.
+2. Time how long it takes for the render to complete, show this value somewhere (lower right hand of window?).  Note this should only occur for a fresh render, moving the window will trigger additional pixels to render, but should not update this timer value that is only intended for the initial render time / render refresh.
