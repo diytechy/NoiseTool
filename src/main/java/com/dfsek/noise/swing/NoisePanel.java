@@ -20,6 +20,7 @@ public class NoisePanel extends JPanel {
     private final RSyntaxTextArea textArea;
 
     private final JLabel image;
+    private JPanel imagePanel;
 
     private final Heightmap3DGLPreviewBufferedGL noise3d;
     private final Blockspace3DGLPreviewBufferedGL noise3dVox;
@@ -42,6 +43,7 @@ public class NoisePanel extends JPanel {
     private final Platform platform;
 
     public NoisePanel(RSyntaxTextArea textArea, Heightmap3DGLPreviewBufferedGL noise3d, Blockspace3DGLPreviewBufferedGL noise3dVox, JTextArea statisticsPanel, NoiseDistributionPanel distributionPanel, final NoiseSettingsPanel settingsPanel, Platform platform, StatusBar statusBar) {
+        setLayout(new java.awt.BorderLayout());
         this.textArea = textArea;
         this.noise3d = noise3d;
         this.noise3dVox = noise3dVox;
@@ -51,13 +53,15 @@ public class NoisePanel extends JPanel {
         this.statusBar = statusBar;
         this.platform = platform;
         this.image = new JLabel();
+        this.image.setVerticalAlignment(JLabel.TOP);
+        this.image.setHorizontalAlignment(JLabel.LEFT);
         this.error = new MutableBoolean();
         this.moved = new MutableBoolean();
         this.freshRender = new MutableBoolean();
         this.moved.set(false);
         this.freshRender.set(false);
         error.set(false);
-        add(new JPanel() {
+        this.imagePanel = new JPanel() {
             private volatile int screenX;
 
             private volatile int screenY;
@@ -67,7 +71,8 @@ public class NoisePanel extends JPanel {
             private volatile int myY;
 
             {
-                add(image);
+                setLayout(new java.awt.BorderLayout());
+                add(image, java.awt.BorderLayout.CENTER);
                 addMouseListener(new MouseListener() {
 
                     @Override
@@ -131,7 +136,8 @@ public class NoisePanel extends JPanel {
                     }
                 });
             }
-        });
+        };
+        add(imagePanel, java.awt.BorderLayout.CENTER);
     }
 
     private static int normal(double in, double out, double min, double max) {
@@ -189,17 +195,33 @@ public class NoisePanel extends JPanel {
     }
 
     public void renderAsync() {
-        // Show "Rendering..." message immediately
-        this.image.setIcon(new TextIcon(this, "Rendering..."));
+        // Reset imagePanel position to origin (it may have been moved by dragging)
+        this.imagePanel.setLocation(0, 0);
+
+        // Set backgrounds to black and make panels opaque to clear artifacts
+        this.setBackground(java.awt.Color.BLACK);
+        this.setOpaque(true);
+        this.imagePanel.setBackground(java.awt.Color.BLACK);
+        this.imagePanel.setOpaque(true);
+        this.image.setBackground(java.awt.Color.BLACK);
+        this.image.setOpaque(true);
+
+        // Clear the icon first
+        this.image.setIcon(null);
+        this.image.setText("Rendering...");
+        this.image.setForeground(java.awt.Color.WHITE);
         this.freshRender.set(true);
 
-        // Force immediate repaint so the "Rendering..." message is visible
-        this.image.paintImmediately(this.image.getBounds());
+        // Force immediate repaint of the entire panel hierarchy to show black background
+        this.paintImmediately(0, 0, getWidth(), getHeight());
 
         final long startTime = System.nanoTime();
 
         reload();
         update();
+
+        // Clear the text after rendering completes
+        this.image.setText(null);
 
         // Calculate and display total render time
         long endTime = System.nanoTime();
