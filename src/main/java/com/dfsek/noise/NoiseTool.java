@@ -164,20 +164,34 @@ public final class NoiseTool extends JFrame implements SearchListener {
         // Wire console output for direct logging (bypasses filter)
         noise.setConsoleOutput(sysout);
 
-        // Tab setup - use SCROLL_TAB_LAYOUT to prevent row shuffling
-        JTabbedPane tabbedPane = new JTabbedPane();
-        tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
-        tabbedPane.addTab("Render", noise);
-        tabbedPane.addTab("Render 3D", noise3d);
-        tabbedPane.addTab("Render Voxel", noise3dVox);
-        tabbedPane.addTab("Settings", settingsPanel);
-        tabbedPane.addTab("Advanced", advancedPanel);
-        tabbedPane.addTab("Distribution", distributionPanel);
-        tabbedPane.addTab("Console", new JScrollPane(sysout));
+        // Tab setup - two fixed rows of toggle buttons with CardLayout content
+        CardLayout cardLayout = new CardLayout();
+        JPanel contentCards = new JPanel(cardLayout);
+        ButtonGroup tabGroup = new ButtonGroup();
 
-        tabbedPane.setSelectedIndex(0);
+        JPanel tabStrips = new JPanel();
+        tabStrips.setLayout(new BoxLayout(tabStrips, BoxLayout.Y_AXIS));
 
-        tabbedPane.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 10));
+        // Row 1: Render tabs (top)
+        JPanel renderRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        addTabButton(renderRow, tabGroup, contentCards, cardLayout, "Render", noise, true);
+        addTabButton(renderRow, tabGroup, contentCards, cardLayout, "Render 3D", noise3d, false);
+        addTabButton(renderRow, tabGroup, contentCards, cardLayout, "Render Voxel", noise3dVox, false);
+        tabStrips.add(renderRow);
+
+        // Row 2: Context tabs (bottom)
+        JPanel contextRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        addTabButton(contextRow, tabGroup, contentCards, cardLayout, "Settings", settingsPanel, false);
+        addTabButton(contextRow, tabGroup, contentCards, cardLayout, "Advanced", advancedPanel, false);
+        addTabButton(contextRow, tabGroup, contentCards, cardLayout, "Distribution", distributionPanel, false);
+        addTabButton(contextRow, tabGroup, contentCards, cardLayout, "Console", new JScrollPane(sysout), false);
+        tabStrips.add(contextRow);
+
+        // Combine tab strips and content area
+        JPanel tabbedPanel = new JPanel(new BorderLayout());
+        tabbedPanel.add(tabStrips, BorderLayout.NORTH);
+        tabbedPanel.add(contentCards, BorderLayout.CENTER);
+        tabbedPanel.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 10));
 
         GridLayout gridLayout = new GridLayout(1, 2);
         JPanel contentPanel = new JPanel(gridLayout);
@@ -185,7 +199,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
         add(contentPanel, BorderLayout.CENTER);
 
         contentPanel.add(textPanel);
-        contentPanel.add(tabbedPane);
+        contentPanel.add(tabbedPanel);
 
 
         setJMenuBar(createMenuBar());
@@ -255,6 +269,19 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
         return provider;
 
+    }
+
+    private static void addTabButton(JPanel row, ButtonGroup group, JPanel cards, CardLayout layout, String name, Component content, boolean selected) {
+        JToggleButton btn = new JToggleButton(name);
+        btn.setFocusPainted(false);
+        btn.setMargin(new Insets(4, 12, 4, 12));
+        group.add(btn);
+        row.add(btn);
+        cards.add(content, name);
+        btn.addActionListener(e -> layout.show(cards, name));
+        if (selected) {
+            btn.setSelected(true);
+        }
     }
 
     public JFileChooser getFileChooser() {
