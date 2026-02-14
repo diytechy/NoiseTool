@@ -15,6 +15,7 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.awt.event.MouseMotionListener;
 import java.awt.image.BufferedImage;
+import java.util.concurrent.ExecutionException;
 
 public class NoisePanel extends JPanel {
     private final RSyntaxTextArea textArea;
@@ -32,6 +33,7 @@ public class NoisePanel extends JPanel {
     private final MutableBoolean chunk = new MutableBoolean();
 
     private final NoiseSettingsPanel settingsPanel;
+    private final AdvancedSettingsPanel advancedPanel;
     private final StatusBar statusBar;
     private final MutableBoolean error;
     private final MutableBoolean moved;
@@ -42,14 +44,260 @@ public class NoisePanel extends JPanel {
     private ProbabilityCollection<Integer> colorCollection;
     private final Platform platform;
 
-    public NoisePanel(RSyntaxTextArea textArea, Heightmap3DGLPreviewBufferedGL noise3d, Blockspace3DGLPreviewBufferedGL noise3dVox, JTextArea statisticsPanel, NoiseDistributionPanel distributionPanel, final NoiseSettingsPanel settingsPanel, Platform platform, StatusBar statusBar) {
+    // Console logging - writes directly to sysout JTextArea, bypassing the filter
+    private JTextArea consoleOutput;
+
+    // Background rendering support
+    private volatile RenderWorker currentWorker = null;
+    private RenderCallback renderCallback;
+
+    public interface RenderCallback {
+        void onRenderComplete(boolean success, double renderTimeMs);
+    }
+
+    // Data class to hold render results computed off the EDT
+    private static class RenderResult {
+        final Sampler sampler;
+        final BufferedImage image;
+        final double[][] noiseVals;
+        final boolean[][][] voxelVals;
+        final double min;
+        final double max;
+        final int[] buckets;
+        final String statisticsText;
+        final double sampleTimeMs;
+        final long seed;
+        final ColorScale colorScale;
+
+        RenderResult(Sampler sampler, BufferedImage image, double[][] noiseVals, boolean[][][] voxelVals,
+                     double min, double max, int[] buckets, String statisticsText, double sampleTimeMs,
+                     long seed, ColorScale colorScale) {
+            this.sampler = sampler;
+            this.image = image;
+            this.noiseVals = noiseVals;
+            this.voxelVals = voxelVals;
+            this.min = min;
+            this.max = max;
+            this.buckets = buckets;
+            this.statisticsText = statisticsText;
+            this.sampleTimeMs = sampleTimeMs;
+            this.seed = seed;
+            this.colorScale = colorScale;
+        }
+    }
+
+    // SwingWorker that performs rendering on a background thread
+    private class RenderWorker extends SwingWorker<RenderResult, Void> {
+        private final long startTime;
+        private volatile boolean cancelled = false;
+
+        // Snapshotted EDT values
+        private final long seed;
+        private final double originX;
+        private final double originZ;
+        private final int multiplier;
+        private final int sizeX;
+        private final int sizeZ;
+        private final int voxelRes;
+        private final int voxelBottomY;
+        private final int voxelTopY;
+        private final boolean useLetExpressions;
+        private final ColorScale colorScale;
+        private final boolean showChunks;
+        private final String yamlText;
+
+        public RenderWorker() {
+            this.startTime = System.nanoTime();
+            // Snapshot all Swing component values on the EDT
+            this.seed = settingsPanel.getSeed();
+            this.originX = settingsPanel.getOriginX();
+            this.originZ = settingsPanel.getOriginZ();
+            this.multiplier = settingsPanel.getPerspectiveMultiplier();
+            this.sizeX = NoisePanel.this.getWidth();
+            this.sizeZ = NoisePanel.this.getHeight();
+            this.voxelRes = advancedPanel.getVoxelResolution();
+            this.voxelBottomY = advancedPanel.getVoxelBottomY();
+            this.voxelTopY = advancedPanel.getVoxelTopY();
+            this.useLetExpressions = advancedPanel.isUseLetExpressions();
+            this.colorScale = settingsPanel.getColorScale();
+            this.showChunks = chunk.get();
+            this.yamlText = textArea.getText();
+        }
+
+        public void cancelRender() {
+            this.cancelled = true;
+            cancel(false);
+        }
+
+        @Override
+        protected RenderResult doInBackground() throws Exception {
+            // Step 1: Compile YAML config -> Sampler (off EDT)
+            consoleLog("Compiling noise config...");
+            DummyPack pack = new DummyPack(platform, new YamlConfiguration(yamlText, "Noise Config"), useLetExpressions);
+            Sampler sampler = pack.getSampler();
+            if (cancelled) return null;
+
+            // Step 2: Generate 2D image (pixel loops with cancellation checks)
+            consoleLog("Rendering noise with seed " + seed);
+            long imgStartTime = System.nanoTime();
+
+            BufferedImage img = new BufferedImage(sizeX, sizeZ, BufferedImage.TYPE_INT_ARGB);
+            double[][] noiseVals = new double[sizeX][sizeZ];
+
+            for (int x = 0; x < sizeX; x++) {
+                if (cancelled) return null;
+                for (int z = 0; z < sizeZ; z++) {
+                    double n = sampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+                    noiseVals[x][z] = n;
+                }
+            }
+
+            long imgEndTime = System.nanoTime();
+            double sampleTimeMs = (imgEndTime - imgStartTime) / 1_000_000.0;
+
+            if (cancelled) return null;
+
+            // Calculate min/max
+            double max = Double.MIN_VALUE;
+            double min = Double.MAX_VALUE;
+            for (double[] noiseVal : noiseVals) {
+                for (double v : noiseVal) {
+                    max = Math.max(v, max);
+                    min = Math.min(v, min);
+                }
+            }
+
+            // Apply colors
+            int[] buckets = new int[sizeX];
+            for (int x = 0; x < noiseVals.length; x++) {
+                if (cancelled) return null;
+                for (int z = 0; z < noiseVals[x].length; z++) {
+                    img.setRGB(x, z, colorScale.valueToIRgb(noiseVals[x][z], min, max));
+                    buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] =
+                            buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] + 1;
+                }
+            }
+
+            // Chunk borders
+            if (showChunks) {
+                for (int x = 0; x < Math.floorDiv(img.getWidth(), 16); x++) {
+                    for (int y = 0; y < img.getHeight(); y++) {
+                        img.setRGB(x * 16, y, buildRGBA(0));
+                    }
+                }
+                for (int y = 0; y < Math.floorDiv(img.getHeight(), 16); y++) {
+                    for (int x = 0; x < img.getWidth(); x++) {
+                        img.setRGB(x, y * 16, buildRGBA(0));
+                    }
+                }
+            }
+
+            String statsText = "min: " + min + "\nmax: " + max + "\nseed: " + seed + "\ntime: " + sampleTimeMs + "ms";
+            consoleLog("Rendered " + (sizeX * sizeZ) + " points in " + sampleTimeMs + "ms.");
+
+            if (cancelled) return null;
+
+            // Step 3: Generate noise vals for 3D heightmap
+            double[][] heightmapVals = new double[sizeX][sizeZ];
+            for (int x = 0; x < sizeX; x++) {
+                if (cancelled) return null;
+                for (int z = 0; z < sizeZ; z++) {
+                    heightmapVals[x][z] = sampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+                }
+            }
+
+            if (cancelled) return null;
+
+            // Step 4: Generate voxel data (if enabled)
+            boolean[][][] voxelVals = null;
+            if (voxelRes > 0) {
+                voxelVals = new boolean[voxelRes][voxelTopY - voxelBottomY][voxelRes];
+                for (int x = 0; x < voxelVals.length; x++) {
+                    if (cancelled) return null;
+                    for (int y = 0; y < voxelVals[x].length; y++) {
+                        for (int z = 0; z < voxelVals[x][y].length; z++) {
+                            double n = sampler.getSample(seed, x * multiplier + originX, y + voxelBottomY, z * multiplier + originZ);
+                            voxelVals[x][y][z] = n > 0;
+                        }
+                    }
+                }
+            }
+
+            return new RenderResult(sampler, img, heightmapVals, voxelVals,
+                    min, max, buckets, statsText, sampleTimeMs, seed, colorScale);
+        }
+
+        @Override
+        protected void done() {
+            // Runs on EDT
+            if (cancelled || isCancelled()) {
+                return;
+            }
+            try {
+                RenderResult result = get();
+                if (result == null) return;
+
+                // Apply results to UI
+                noiseSeeded = result.sampler;
+                render = result.image;
+                image.setIcon(new ImageIcon(render));
+                image.setText(null);
+
+                noise3d.setColorScale(result.colorScale);
+                noise3d.setHeightmap(result.noiseVals);
+
+                if (result.voxelVals != null) {
+                    noise3dVox.setBlockspace(result.voxelVals);
+                } else {
+                    noise3dVox.clearBlockspace();
+                }
+
+                statisticsPanel.setText(result.statisticsText);
+                distributionPanel.update(result.buckets);
+                error.set(false);
+
+                double totalTimeMs = (System.nanoTime() - startTime) / 1_000_000.0;
+                statusBar.setRenderTime(totalTimeMs);
+
+                if (renderCallback != null) {
+                    renderCallback.onRenderComplete(true, totalTimeMs);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause != null) {
+                    cause.printStackTrace();
+                } else {
+                    e.printStackTrace();
+                }
+                image.setIcon(new TextIcon(NoisePanel.this, "An error occurred. "));
+                image.setText(null);
+                noise3d.clearHeightmap();
+                noise3dVox.clearBlockspace();
+                statisticsPanel.setText("An error occurred.");
+                distributionPanel.error();
+                error.set(true);
+
+                if (renderCallback != null) {
+                    renderCallback.onRenderComplete(false, 0);
+                }
+            } finally {
+                currentWorker = null;
+                freshRender.set(false);
+            }
+        }
+    }
+
+    public NoisePanel(RSyntaxTextArea textArea, Heightmap3DGLPreviewBufferedGL noise3d, Blockspace3DGLPreviewBufferedGL noise3dVox, NoiseDistributionPanel distributionPanel, final NoiseSettingsPanel settingsPanel, AdvancedSettingsPanel advancedPanel, Platform platform, StatusBar statusBar) {
         setLayout(new java.awt.BorderLayout());
         this.textArea = textArea;
         this.noise3d = noise3d;
         this.noise3dVox = noise3dVox;
-        this.statisticsPanel = statisticsPanel;
+        this.statisticsPanel = advancedPanel.getStatisticsPanel();
         this.distributionPanel = distributionPanel;
         this.settingsPanel = settingsPanel;
+        this.advancedPanel = advancedPanel;
         this.statusBar = statusBar;
         this.platform = platform;
         this.image = new JLabel();
@@ -138,6 +386,28 @@ public class NoisePanel extends JPanel {
             }
         };
         add(imagePanel, java.awt.BorderLayout.CENTER);
+
+        // Bind Escape key to cancel rendering
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke("ESCAPE"), "cancelRender");
+        getActionMap().put("cancelRender", new AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                cancelRender();
+            }
+        });
+    }
+
+    public void setConsoleOutput(JTextArea consoleOutput) {
+        this.consoleOutput = consoleOutput;
+    }
+
+    private void consoleLog(String message) {
+        if (consoleOutput != null) {
+            SwingUtilities.invokeLater(() -> {
+                consoleOutput.append(message + "\n");
+                consoleOutput.setCaretPosition(consoleOutput.getDocument().getLength());
+            });
+        }
     }
 
     private static int normal(double in, double out, double min, double max) {
@@ -160,7 +430,7 @@ public class NoisePanel extends JPanel {
             this.noise3d.setColorScale(settingsPanel.getColorScale());
             this.noise3d.setHeightmap(noiseVals);
 
-            if (this.settingsPanel.getVoxelResolution() > 0) {
+            if (this.advancedPanel.getVoxelResolution() > 0) {
                 boolean[][][] noiseValsVox = getNoiseVals3d(this.settingsPanel.getSeed());
                 this.noise3dVox.setBlockspace(noiseValsVox);
             } else {
@@ -181,7 +451,7 @@ public class NoisePanel extends JPanel {
     public void reload() {
         this.error.set(true);
         try {
-            DummyPack pack = new DummyPack(platform, new YamlConfiguration(this.textArea.getText(), "Noise Config"), this.settingsPanel.isUseLetExpressions());
+            DummyPack pack = new DummyPack(platform, new YamlConfiguration(this.textArea.getText(), "Noise Config"), this.advancedPanel.isUseLetExpressions());
             this.noiseSeeded = pack.getSampler();
             this.error.set(false);
         } catch (Exception e) {
@@ -195,6 +465,12 @@ public class NoisePanel extends JPanel {
     }
 
     public void renderAsync() {
+        // Cancel any in-progress render
+        if (currentWorker != null) {
+            currentWorker.cancelRender();
+            currentWorker = null;
+        }
+
         // Reset imagePanel position to origin (it may have been moved by dragging)
         this.imagePanel.setLocation(0, 0);
 
@@ -206,28 +482,34 @@ public class NoisePanel extends JPanel {
         this.image.setBackground(java.awt.Color.BLACK);
         this.image.setOpaque(true);
 
-        // Clear the icon first
+        // Clear the icon and show rendering text
         this.image.setIcon(null);
-        this.image.setText("Rendering...");
+        this.image.setText("Rendering... (Escape to cancel)");
         this.image.setForeground(java.awt.Color.WHITE);
         this.freshRender.set(true);
+        this.error.set(true);
 
-        // Force immediate repaint of the entire panel hierarchy to show black background
-        this.paintImmediately(0, 0, getWidth(), getHeight());
+        // Start background render
+        currentWorker = new RenderWorker();
+        currentWorker.execute();
+    }
 
-        final long startTime = System.nanoTime();
+    public void cancelRender() {
+        if (currentWorker != null) {
+            currentWorker.cancelRender();
+            currentWorker = null;
+            this.image.setText("Cancelled");
+            this.freshRender.set(false);
+            this.error.set(false);
+        }
+    }
 
-        reload();
-        update();
+    public boolean isRendering() {
+        return currentWorker != null;
+    }
 
-        // Clear the text after rendering completes
-        this.image.setText(null);
-
-        // Calculate and display total render time
-        long endTime = System.nanoTime();
-        double totalTimeMs = (endTime - startTime) / 1000000.0D;
-        statusBar.setRenderTime(totalTimeMs);
-        freshRender.set(false);
+    public void setRenderCallback(RenderCallback callback) {
+        this.renderCallback = callback;
     }
 
     public BufferedImage getRender() {
@@ -260,9 +542,9 @@ public class NoisePanel extends JPanel {
         double originZ = this.settingsPanel.getOriginZ();
         int multiplier = this.settingsPanel.getPerspectiveMultiplier();
 
-        int sampleRes = this.settingsPanel.getVoxelResolution();
-        int sampleYMin = this.settingsPanel.getVoxelBottomY();
-        int sampleYMax = this.settingsPanel.getVoxelTopY();
+        int sampleRes = this.advancedPanel.getVoxelResolution();
+        int sampleYMin = this.advancedPanel.getVoxelBottomY();
+        int sampleYMax = this.advancedPanel.getVoxelTopY();
 
         boolean[][][] noiseVals = new boolean[sampleRes][sampleYMax - sampleYMin][sampleRes];
         for (int x = 0; x < noiseVals.length; x++) {
@@ -277,7 +559,7 @@ public class NoisePanel extends JPanel {
     }
 
     private BufferedImage getImage(long seed) {
-        System.out.println("Rendering noise with seed " + seed);
+        consoleLog("Rendering noise with seed " + seed);
 
         int sizeX = getWidth();
         int sizeY = getHeight();
@@ -300,7 +582,7 @@ public class NoisePanel extends JPanel {
 
         double max = Double.MIN_VALUE;
         double min = Double.MAX_VALUE;
-        for (double[] noiseVal : noiseVals) { // do this separately to give more accurate measure of performance.
+        for (double[] noiseVal : noiseVals) {
             for (double v : noiseVal) {
                 max = Math.max(v, max);
                 min = Math.min(v, min);
@@ -334,7 +616,7 @@ public class NoisePanel extends JPanel {
         }
         this.statisticsPanel.setText("min: " + min + "\nmax: " + max + "\nseed: " + seed + "\ntime: " + timeMs + "ms");
         this.distributionPanel.update(buckets);
-        System.out.println("Rendered " + (sizeX * sizeY) + " points in " + timeMs + "ms.");
+        consoleLog("Rendered " + (sizeX * sizeY) + " points in " + timeMs + "ms.");
 
         return image;
     }

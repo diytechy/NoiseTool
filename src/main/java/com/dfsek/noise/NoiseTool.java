@@ -2,6 +2,7 @@ package com.dfsek.noise;
 
 import com.dfsek.noise.platform.DummyPack;
 import com.dfsek.noise.platform.PlatformImpl;
+import com.dfsek.noise.swing.AdvancedSettingsPanel;
 import com.dfsek.noise.swing.NoiseDistributionPanel;
 import com.dfsek.noise.swing.NoisePanel;
 import com.dfsek.noise.swing.NoiseSettingsPanel;
@@ -30,15 +31,22 @@ import org.fife.ui.rtextarea.SearchContext;
 import org.fife.ui.rtextarea.SearchEngine;
 import org.fife.ui.rtextarea.SearchResult;
 
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import javax.swing.UIManager.LookAndFeelInfo;
 import java.awt.*;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
-import java.io.IOException;
-import java.io.PrintStream;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.image.BufferedImage;
+import java.io.*;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Objects;
+import java.util.Properties;
 import java.util.function.Supplier;
 
 
@@ -50,10 +58,27 @@ public final class NoiseTool extends JFrame implements SearchListener {
     private final JFileChooser fileChooser = new JFileChooser();
     private final JFileChooser imageChooser = new JFileChooser();
     private final NoisePanel noise;
+    private final JTextArea sysout;
+    private final NoiseSettingsPanel settingsPanel;
+    private final AdvancedSettingsPanel advancedPanel;
     private FindDialog findDialog;
     private ReplaceDialog replaceDialog;
     private FindToolBar findToolBar;
     private ReplaceToolBar replaceToolBar;
+
+    // Console filtering
+    private TextAreaOutputStream outStream;
+    private TextAreaOutputStream errStream;
+
+    // Auto-render state
+    private File lastOpenedFile = null;
+    private boolean autoRenderEnabled = false;
+    private Timer autoRenderTimer;
+    private long lastKnownFileModified = 0;
+
+    // Settings persistence
+    private static final File SETTINGS_DIR = new File(System.getProperty("user.home"), ".noisetool");
+    private static final File SETTINGS_FILE = new File(SETTINGS_DIR, "settings.properties");
 
     private static final TypeKey<Supplier<ObjectTemplate<Sampler>>> NOISE_REGISTRY_KEY = new TypeKey<>() {};
 
@@ -61,6 +86,9 @@ public final class NoiseTool extends JFrame implements SearchListener {
     private NoiseTool() throws IOException {
         String config = IOUtils.toString(Objects.requireNonNull(NoiseTool.class.getResourceAsStream("/config.yml")), StandardCharsets.UTF_8);
         initSearchDialogs();
+
+        // Load persisted settings
+        Properties settings = loadSettings();
 
         // Use a border layout as the root layout
         BorderLayout layout = new BorderLayout();
@@ -89,11 +117,12 @@ public final class NoiseTool extends JFrame implements SearchListener {
         ErrorStrip errorStrip = new ErrorStrip(textArea);
         textPanel.add(errorStrip, BorderLayout.LINE_END);
 
-        NoiseSettingsPanel settingsPanel = new NoiseSettingsPanel();
+        settingsPanel = new NoiseSettingsPanel(settings);
+        advancedPanel = new AdvancedSettingsPanel(settings);
 
-        // Nose panels and other stuff at the right side
+        // Noise panels and other stuff at the right side
         PlatformImpl platform = new PlatformImpl();
-        DummyPack pack = new DummyPack(platform, new YamlConfiguration(config, "Noise Config"), settingsPanel.isUseLetExpressions());
+        DummyPack pack = new DummyPack(platform, new YamlConfiguration(config, "Noise Config"), advancedPanel.isUseLetExpressions());
 
         CompletionProvider provider = createCompletionProvider(pack.getRegistry(NOISE_REGISTRY_KEY));
 
@@ -105,35 +134,45 @@ public final class NoiseTool extends JFrame implements SearchListener {
         ac.setAutoCompleteSingleChoices(false);
         ac.setAutoActivationDelay(200);
 
-        JTextArea statisticsPanel = new JTextArea();
-        statisticsPanel.setEditable(false);
-
         NoiseDistributionPanel distributionPanel = new NoiseDistributionPanel();
 
         GLUtil.logGLProfiles();
         Heightmap3DGLPreviewBufferedGL noise3d = new Heightmap3DGLPreviewBufferedGL();
         Blockspace3DGLPreviewBufferedGL noise3dVox = new Blockspace3DGLPreviewBufferedGL();
 
-        this.noise = new NoisePanel(textArea, noise3d, noise3dVox, statisticsPanel, distributionPanel, settingsPanel, platform, statusBar);
+        this.noise = new NoisePanel(textArea, noise3d, noise3dVox, distributionPanel, settingsPanel, advancedPanel, platform, statusBar);
 
-        JTabbedPane tabbedPane = new JTabbedPane();
-        tabbedPane.addTab("Render", noise);
-
-        tabbedPane.addTab("Render 3D", noise3d);
-        tabbedPane.addTab("Render Voxel", noise3dVox);
-
-        tabbedPane.addTab("Settings", settingsPanel);
-
-        tabbedPane.addTab("Statistics", statisticsPanel);
-
-        tabbedPane.addTab("Distribution", distributionPanel);
-
-        JTextArea sysout = new JTextArea();
+        // Console setup
+        sysout = new JTextArea();
         sysout.setEditable(false);
 
-        System.setOut(new PrintStream(new TextAreaOutputStream(sysout)));
-        System.setErr(new PrintStream(new TextAreaOutputStream(sysout)));
+        outStream = new TextAreaOutputStream(sysout);
+        errStream = new TextAreaOutputStream(sysout);
+        boolean verbose = advancedPanel.isEditorVerboseConsole();
+        outStream.setPassThrough(verbose);
+        errStream.setPassThrough(verbose);
+        System.setOut(new PrintStream(outStream));
+        System.setErr(new PrintStream(errStream));
 
+        // Wire verbose console toggle
+        advancedPanel.setOnVerboseConsoleChanged(() -> {
+            boolean v = advancedPanel.isEditorVerboseConsole();
+            outStream.setPassThrough(v);
+            errStream.setPassThrough(v);
+        });
+
+        // Wire console output for direct logging (bypasses filter)
+        noise.setConsoleOutput(sysout);
+
+        // Tab setup - use SCROLL_TAB_LAYOUT to prevent row shuffling
+        JTabbedPane tabbedPane = new JTabbedPane();
+        tabbedPane.setTabLayoutPolicy(JTabbedPane.SCROLL_TAB_LAYOUT);
+        tabbedPane.addTab("Render", noise);
+        tabbedPane.addTab("Render 3D", noise3d);
+        tabbedPane.addTab("Render Voxel", noise3dVox);
+        tabbedPane.addTab("Settings", settingsPanel);
+        tabbedPane.addTab("Advanced", advancedPanel);
+        tabbedPane.addTab("Distribution", distributionPanel);
         tabbedPane.addTab("Console", new JScrollPane(sysout));
 
         tabbedPane.setSelectedIndex(0);
@@ -153,7 +192,17 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
 
         setTitle("Noise Tool");
-        setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+        setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+
+        // Save settings on window close
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                saveSettings();
+                dispose();
+                System.exit(0);
+            }
+        });
 
         FlatDarculaLaf.setup();
 
@@ -278,11 +327,206 @@ public final class NoiseTool extends JFrame implements SearchListener {
         up.putValue(Action.ACCELERATOR_KEY, KeyStroke.getKeyStroke(KeyEvent.VK_F5, 0));
         menu.add(up);
         menu.add(new MutableBooleanAction(noise.getChunk(), "Toggle Chunk Borders"));
+
+        // Auto-render toggle (F6)
+        Action autoRender = new ToggleAutoRenderAction(this);
+        autoRender.putValue(Action.ACCELERATOR_KEY, KeyStroke.getKeyStroke(KeyEvent.VK_F6, 0));
+        menu.add(autoRender);
+
         mb.add(menu);
 
         return mb;
 
     }
+
+    // --- Auto-render functionality ---
+
+    public void toggleAutoRender() {
+        autoRenderEnabled = !autoRenderEnabled;
+
+        if (autoRenderEnabled) {
+            if (lastOpenedFile == null) {
+                consoleLog("No file opened. Open a file first before enabling auto-render.");
+                autoRenderEnabled = false;
+                return;
+            }
+
+            lastKnownFileModified = lastOpenedFile.lastModified();
+            statusBar.setAutoRenderStatus(true);
+
+            // Set up the render callback
+            noise.setRenderCallback((success, renderTimeMs) -> {
+                if (!autoRenderEnabled) return;
+
+                String timestamp = new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss-SSS").format(new Date());
+
+                // Auto-save log
+                autoSaveLog(timestamp);
+
+                // Auto-save render image (only on success)
+                if (success) {
+                    autoSaveRender(timestamp);
+                }
+
+                // Schedule next check after 5 seconds
+                scheduleAutoRenderCheck();
+            });
+
+            consoleLog("[Auto-render] Enabled. Watching: " + lastOpenedFile.getAbsolutePath());
+
+            // Start the first check
+            scheduleAutoRenderCheck();
+        } else {
+            if (autoRenderTimer != null) {
+                autoRenderTimer.stop();
+            }
+            noise.setRenderCallback(null);
+            statusBar.setAutoRenderStatus(false);
+            consoleLog("[Auto-render] Disabled.");
+        }
+    }
+
+    private void scheduleAutoRenderCheck() {
+        if (autoRenderTimer != null) {
+            autoRenderTimer.stop();
+        }
+        autoRenderTimer = new Timer(5000, e -> checkFileAndRerender());
+        autoRenderTimer.setRepeats(false);
+        autoRenderTimer.start();
+    }
+
+    private void checkFileAndRerender() {
+        if (!autoRenderEnabled || lastOpenedFile == null) return;
+
+        long currentModified = lastOpenedFile.lastModified();
+        if (currentModified != lastKnownFileModified) {
+            lastKnownFileModified = currentModified;
+            consoleLog("[Auto-render] File changed, reloading...");
+
+            // Read file into text area
+            try {
+                textArea.setText(IOUtils.toString(new FileInputStream(lastOpenedFile), Charset.defaultCharset()));
+            } catch (IOException ex) {
+                ex.printStackTrace();
+                scheduleAutoRenderCheck();
+                return;
+            }
+
+            // Clear console before auto-render
+            sysout.setText("");
+
+            // Trigger render -- callback will handle post-render actions
+            noise.renderAsync();
+        } else {
+            // File hasn't changed, schedule another check
+            scheduleAutoRenderCheck();
+        }
+    }
+
+    private void autoSaveLog(String timestamp) {
+        if (lastOpenedFile == null) return;
+
+        File outputDir = new File(lastOpenedFile.getParentFile(), "auto_output");
+        if (!outputDir.exists()) {
+            outputDir.mkdirs();
+        }
+
+        File logFile = new File(outputDir, timestamp + "_log.txt");
+        try (FileWriter writer = new FileWriter(logFile)) {
+            writer.write(sysout.getText());
+            consoleLog("[Auto-render] Log saved to " + logFile.getAbsolutePath());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void autoSaveRender(String timestamp) {
+        if (lastOpenedFile == null) return;
+
+        BufferedImage render = noise.getRender();
+        if (render == null) return;
+
+        File outputDir = new File(lastOpenedFile.getParentFile(), "auto_output");
+        if (!outputDir.exists()) {
+            outputDir.mkdirs();
+        }
+
+        File imageFile = new File(outputDir, timestamp + "_render.png");
+        try (FileOutputStream fos = new FileOutputStream(imageFile)) {
+            ImageIO.write(render, "png", fos);
+            consoleLog("[Auto-render] Render saved to " + imageFile.getAbsolutePath());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // --- Console logging (bypasses filter) ---
+
+    private void consoleLog(String message) {
+        SwingUtilities.invokeLater(() -> {
+            sysout.append(message + "\n");
+            sysout.setCaretPosition(sysout.getDocument().getLength());
+        });
+    }
+
+    // --- Settings persistence ---
+
+    private static Properties loadSettings() {
+        Properties props = new Properties();
+        if (SETTINGS_FILE.exists()) {
+            try (FileInputStream fis = new FileInputStream(SETTINGS_FILE)) {
+                props.load(fis);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return props;
+    }
+
+    private void saveSettings() {
+        Properties props = new Properties();
+
+        // Basic settings
+        props.setProperty("seed", String.valueOf(settingsPanel.getSeed()));
+        props.setProperty("originX", String.valueOf(settingsPanel.getOriginX()));
+        props.setProperty("originZ", String.valueOf(settingsPanel.getOriginZ()));
+        props.setProperty("perspectiveMultiplier", String.valueOf(settingsPanel.getPerspectiveMultiplier()));
+        props.setProperty("colorScalePreset", settingsPanel.getColorScalePresetName());
+        props.setProperty("colorScaleNormalized", String.valueOf(settingsPanel.isColorScaleNormalized()));
+        props.setProperty("colorScaleText", settingsPanel.getColorScaleText());
+
+        // Advanced settings
+        props.setProperty("useLetExpressions", String.valueOf(advancedPanel.isUseLetExpressions()));
+        props.setProperty("voxelResolution", String.valueOf(advancedPanel.getVoxelResolution()));
+        props.setProperty("voxelBottomY", String.valueOf(advancedPanel.getVoxelBottomY()));
+        props.setProperty("voxelTopY", String.valueOf(advancedPanel.getVoxelTopY()));
+        props.setProperty("editorVerboseConsole", String.valueOf(advancedPanel.isEditorVerboseConsole()));
+
+        if (!SETTINGS_DIR.exists()) {
+            SETTINGS_DIR.mkdirs();
+        }
+        try (FileOutputStream fos = new FileOutputStream(SETTINGS_FILE)) {
+            props.store(fos, "NoiseTool Settings");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    // --- File tracking ---
+
+    public File getLastOpenedFile() {
+        return lastOpenedFile;
+    }
+
+    public void setLastOpenedFile(File file) {
+        this.lastOpenedFile = file;
+    }
+
+    public JTextArea getSysout() {
+        return sysout;
+    }
+
+    // --- Search functionality ---
 
     @Override
     public String getSelectedText() {

@@ -13,6 +13,7 @@ public class StatusBar extends JPanel {
     private final JLabel label;
     private final JLabel coordinatesLabel;
     private final JLabel renderTimeLabel;
+    private final JLabel autoRenderLabel;
 
     public StatusBar() {
         setLayout(new BorderLayout());
@@ -23,6 +24,9 @@ public class StatusBar extends JPanel {
 
         label = new JLabel("Ready");
         leftGroup.add(label, BorderLayout.LINE_START);
+
+        autoRenderLabel = new JLabel("");
+        leftGroup.add(autoRenderLabel);
 
         // Create grouping for components on the right side
         JPanel rightGroup = new JPanel(new FlowLayout());
@@ -53,5 +57,14 @@ public class StatusBar extends JPanel {
 
     public void setRenderTime(double timeMs) {
         renderTimeLabel.setText(String.format("Render: %.2fms", timeMs));
+    }
+
+    public void setAutoRenderStatus(boolean enabled) {
+        if (enabled) {
+            autoRenderLabel.setText("  [Auto-render: ON]  ");
+            autoRenderLabel.setForeground(new Color(0, 180, 0));
+        } else {
+            autoRenderLabel.setText("");
+        }
     }
 }
