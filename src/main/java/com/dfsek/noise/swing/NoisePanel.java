@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutionException;
 
 public class NoisePanel extends JPanel {
     private final RSyntaxTextArea elevationTextArea;
+    private final RSyntaxTextArea commonTextArea;
     private final RSyntaxTextArea colorTextArea;
 
     private final JLabel image;
@@ -112,6 +113,7 @@ public class NoisePanel extends JPanel {
         private final ColorScale colorScale;
         private final boolean showChunks;
         private final String elevationYamlText;
+        private final String commonYamlText;
         private final String colorYamlText;
         private final float yScale;
 
@@ -131,6 +133,7 @@ public class NoisePanel extends JPanel {
             this.colorScale = settingsPanel.getColorScale();
             this.showChunks = chunk.get();
             this.elevationYamlText = elevationTextArea.getText();
+            this.commonYamlText = commonTextArea.getText();
             this.colorYamlText = colorTextArea.getText().trim();
             this.yScale = advancedPanel.getYScale() / (float) this.multiplier;
         }
@@ -144,7 +147,7 @@ public class NoisePanel extends JPanel {
         protected RenderResult doInBackground() throws Exception {
             // Step 1: Compile elevation YAML config -> Sampler (off EDT)
             consoleLog("Compiling elevation config...");
-            DummyPack pack = new DummyPack(platform, new YamlConfiguration(elevationYamlText, "Noise Config"), useLetExpressions);
+            DummyPack pack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonYamlText, elevationYamlText), "Noise Config"), useLetExpressions);
             Sampler sampler = pack.getSampler();
             if (cancelled) return null;
 
@@ -153,7 +156,7 @@ public class NoisePanel extends JPanel {
             if (!colorYamlText.isEmpty()) {
                 try {
                     consoleLog("Compiling color config...");
-                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(colorYamlText, "Color Config"), useLetExpressions);
+                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonYamlText, colorYamlText), "Color Config"), useLetExpressions);
                     colorSampler = colorPack.getSampler();
                     consoleLog("Color sampler compiled successfully.");
                 } catch (Exception e) {
@@ -350,9 +353,10 @@ public class NoisePanel extends JPanel {
         }
     }
 
-    public NoisePanel(RSyntaxTextArea elevationTextArea, RSyntaxTextArea colorTextArea, Heightmap3DGLPreviewBufferedGL noise3d, Blockspace3DGLPreviewBufferedGL noise3dVox, NoiseDistributionPanel distributionPanel, final NoiseSettingsPanel settingsPanel, AdvancedSettingsPanel advancedPanel, Platform platform, StatusBar statusBar) {
+    public NoisePanel(RSyntaxTextArea elevationTextArea, RSyntaxTextArea commonTextArea, RSyntaxTextArea colorTextArea, Heightmap3DGLPreviewBufferedGL noise3d, Blockspace3DGLPreviewBufferedGL noise3dVox, NoiseDistributionPanel distributionPanel, final NoiseSettingsPanel settingsPanel, AdvancedSettingsPanel advancedPanel, Platform platform, StatusBar statusBar) {
         setLayout(new java.awt.BorderLayout());
         this.elevationTextArea = elevationTextArea;
+        this.commonTextArea = commonTextArea;
         this.colorTextArea = colorTextArea;
         this.noise3d = noise3d;
         this.noise3dVox = noise3dVox;
@@ -472,6 +476,13 @@ public class NoisePanel extends JPanel {
         }
     }
 
+    private static String prependCommon(String commonYaml, String editorYaml) {
+        if (commonYaml == null || commonYaml.trim().isEmpty()) {
+            return editorYaml;
+        }
+        return commonYaml + "\n" + editorYaml;
+    }
+
     private static int normal(double in, double out, double min, double max) {
         double range = max - min;
         return (int) ((in - min) * out / range);
@@ -543,14 +554,15 @@ public class NoisePanel extends JPanel {
     public void reload() {
         this.error.set(true);
         try {
-            DummyPack pack = new DummyPack(platform, new YamlConfiguration(this.elevationTextArea.getText(), "Noise Config"), this.advancedPanel.isUseLetExpressions());
+            String commonText = this.commonTextArea.getText();
+            DummyPack pack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonText, this.elevationTextArea.getText()), "Noise Config"), this.advancedPanel.isUseLetExpressions());
             this.noiseSeeded = pack.getSampler();
 
             // Compile color sampler if defined
             String colorText = this.colorTextArea.getText().trim();
             if (!colorText.isEmpty()) {
                 try {
-                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(colorText, "Color Config"), this.advancedPanel.isUseLetExpressions());
+                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonText, colorText), "Color Config"), this.advancedPanel.isUseLetExpressions());
                     this.colorSamplerSeeded = colorPack.getSampler();
                 } catch (Exception e) {
                     consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());

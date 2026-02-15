@@ -54,6 +54,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
     private final CollapsibleSectionPanel csp;
     private final RSyntaxTextArea elevationTextArea;
+    private final RSyntaxTextArea commonTextArea;
     private final RSyntaxTextArea colorTextArea;
     private RSyntaxTextArea activeTextArea;
     private final StatusBar statusBar;
@@ -103,8 +104,9 @@ public final class NoiseTool extends JFrame implements SearchListener {
         // --- Dual editor setup (Elevation + Color) ---
         JPanel textPanel = new JPanel(new BorderLayout());
 
-        // Create both text areas with identical settings
+        // Create all text areas with identical settings
         elevationTextArea = createEditorTextArea();
+        commonTextArea = createEditorTextArea();
         colorTextArea = createEditorTextArea();
         activeTextArea = elevationTextArea;
 
@@ -117,6 +119,10 @@ public final class NoiseTool extends JFrame implements SearchListener {
             elevationTextArea.setText(config);
             elevationTextArea.setCaretPosition(0);
         }
+        String savedCommon = settings.getProperty("commonText", "");
+        commonTextArea.setText(savedCommon);
+        commonTextArea.setCaretPosition(0);
+
         String savedColor = settings.getProperty("colorText", "");
         colorTextArea.setText(savedColor);
         colorTextArea.setCaretPosition(0);
@@ -126,6 +132,10 @@ public final class NoiseTool extends JFrame implements SearchListener {
         elevationEditorPanel.add(new RTextScrollPane(elevationTextArea), BorderLayout.CENTER);
         elevationEditorPanel.add(new ErrorStrip(elevationTextArea), BorderLayout.LINE_END);
 
+        JPanel commonEditorPanel = new JPanel(new BorderLayout());
+        commonEditorPanel.add(new RTextScrollPane(commonTextArea), BorderLayout.CENTER);
+        commonEditorPanel.add(new ErrorStrip(commonTextArea), BorderLayout.LINE_END);
+
         JPanel colorEditorPanel = new JPanel(new BorderLayout());
         colorEditorPanel.add(new RTextScrollPane(colorTextArea), BorderLayout.CENTER);
         colorEditorPanel.add(new ErrorStrip(colorTextArea), BorderLayout.LINE_END);
@@ -134,6 +144,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
         CardLayout editorCardLayout = new CardLayout();
         JPanel editorCards = new JPanel(editorCardLayout);
         editorCards.add(elevationEditorPanel, "Elevation");
+        editorCards.add(commonEditorPanel, "Common");
         editorCards.add(colorEditorPanel, "Color");
 
         // Editor tab buttons
@@ -147,6 +158,12 @@ public final class NoiseTool extends JFrame implements SearchListener {
         editorTabGroup.add(elevationTab);
         editorTabRow.add(elevationTab);
 
+        JToggleButton commonTab = new JToggleButton("Common");
+        commonTab.setFocusPainted(false);
+        commonTab.setMargin(new Insets(4, 12, 4, 12));
+        editorTabGroup.add(commonTab);
+        editorTabRow.add(commonTab);
+
         JToggleButton colorTab = new JToggleButton("Color");
         colorTab.setFocusPainted(false);
         colorTab.setMargin(new Insets(4, 12, 4, 12));
@@ -156,6 +173,10 @@ public final class NoiseTool extends JFrame implements SearchListener {
         elevationTab.addActionListener(e -> {
             editorCardLayout.show(editorCards, "Elevation");
             activeTextArea = elevationTextArea;
+        });
+        commonTab.addActionListener(e -> {
+            editorCardLayout.show(editorCards, "Common");
+            activeTextArea = commonTextArea;
         });
         colorTab.addActionListener(e -> {
             editorCardLayout.show(editorCards, "Color");
@@ -186,6 +207,14 @@ public final class NoiseTool extends JFrame implements SearchListener {
         acElevation.setAutoCompleteSingleChoices(false);
         acElevation.setAutoActivationDelay(200);
 
+        AutoCompletion acCommon = new AutoCompletion(provider);
+        acCommon.install(commonTextArea);
+        acCommon.setShowDescWindow(true);
+        acCommon.setAutoCompleteEnabled(true);
+        acCommon.setAutoActivationEnabled(true);
+        acCommon.setAutoCompleteSingleChoices(false);
+        acCommon.setAutoActivationDelay(200);
+
         AutoCompletion acColor = new AutoCompletion(provider);
         acColor.install(colorTextArea);
         acColor.setShowDescWindow(true);
@@ -200,7 +229,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
         Heightmap3DGLPreviewBufferedGL noise3d = new Heightmap3DGLPreviewBufferedGL();
         Blockspace3DGLPreviewBufferedGL noise3dVox = new Blockspace3DGLPreviewBufferedGL();
 
-        this.noise = new NoisePanel(elevationTextArea, colorTextArea, noise3d, noise3dVox, distributionPanel, settingsPanel, advancedPanel, platform, statusBar);
+        this.noise = new NoisePanel(elevationTextArea, commonTextArea, colorTextArea, noise3d, noise3dVox, distributionPanel, settingsPanel, advancedPanel, platform, statusBar);
 
         // Console setup
         sysout = new JTextArea();
@@ -602,6 +631,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
         // Editor contents
         props.setProperty("elevationText", elevationTextArea.getText());
+        props.setProperty("commonText", commonTextArea.getText());
         props.setProperty("colorText", colorTextArea.getText());
 
         if (!SETTINGS_DIR.exists()) {
@@ -725,6 +755,10 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
     public RSyntaxTextArea getElevationTextArea() {
         return elevationTextArea;
+    }
+
+    public RSyntaxTextArea getCommonTextArea() {
+        return commonTextArea;
     }
 
     public RSyntaxTextArea getColorTextArea() {

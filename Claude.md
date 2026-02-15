@@ -113,5 +113,19 @@ When a tab is pressed, it should not shuffle the row it is on to the bottom.  "R
 When a render is interrupted (via escape key) change the text from "Rendering" to "Cancelled".
 
 #################################################
-Note the actual Terra configured noise definition pipeline has more capabilities than the noise tool, the ultimate goal is to make sure 
 
+Let's add 2 buttons / tabs above the editor, one brings the editor window to the elevation sampler (default, called "Elevation") and is what the editor window does today, and the other tab / button (called "Color") would expect a similar sampler that would be fed into the transform to build a color.  Note the contents of both editors should persist through application stops / starts.
+
+Create a plan and let me know if there are any questions.
+
+###############################################
+
+Now create a plan for an advanced setting called "y-scale" with a default value of 200.  This will ensure the 3d render scale is normalized properly.  Such that if the x spans 0 to 1000, and y spans 0 to 1, the 3d scale will render such that the y distance appears 20% of the distance compared with the span of x.  Today it appears the y scale is automated depending on it's distribution, which makes the 3d render stretch in the y direction.  Also confirm how y-scaling is performed today and if it is derived from distribution data or some other method.
+
+###########################################
+
+Okay, this may be a source of confusion.  I am not interested in pixel units, I am interested in world units that the sampler is actually sampled at.  For example, if the perspective multiplier is 10, and the view window is 1000 x 1000 pixels wide, the view window would span 10000 x 10000 sampler units.  Assuming a typical sampler, it's output would be from y=-1 to y=1.  From an isometric view, I would expect in the example above that -give a straight top down view of the 3d render- the x and z plane coordinates would span 1000 pixels in each direction, as it does today.  However, if I then rotate the view from a front view (viewing the x/y plane), I would expect the y axis to span from -20 pixels to +20 pixels (As the sampler provides +/- 1 range to y * the 200 yScale / 10 perspective multiplier).  Create a plan to implement, the scaling can still occur in the same place it does today, but it may need to know about how x/z are spanning and the perspective multiplier to understand how to appropriately scale y.
+
+####################################################
+
+Create a plan to add another editor pane with a tab (Next to "Elevation" and "Color" that can contain common sampler definitions (with anchors) that can be referenced by the elevation and color editor panes (through aliases)
