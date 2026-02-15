@@ -18,7 +18,8 @@ import java.awt.image.BufferedImage;
 import java.util.concurrent.ExecutionException;
 
 public class NoisePanel extends JPanel {
-    private final RSyntaxTextArea textArea;
+    private final RSyntaxTextArea elevationTextArea;
+    private final RSyntaxTextArea colorTextArea;
 
     private final JLabel image;
     private JPanel imagePanel;
@@ -41,7 +42,7 @@ public class NoisePanel extends JPanel {
     private BufferedImage render;
 
     private Sampler noiseSeeded;
-    private ProbabilityCollection<Integer> colorCollection;
+    private Sampler colorSamplerSeeded;
     private final Platform platform;
 
     // Console logging - writes directly to sysout JTextArea, bypassing the filter
@@ -58,8 +59,10 @@ public class NoisePanel extends JPanel {
     // Data class to hold render results computed off the EDT
     private static class RenderResult {
         final Sampler sampler;
+        final Sampler colorSampler;
         final BufferedImage image;
         final double[][] noiseVals;
+        final double[][] colorNoiseVals;
         final boolean[][][] voxelVals;
         final double min;
         final double max;
@@ -69,12 +72,15 @@ public class NoisePanel extends JPanel {
         final long seed;
         final ColorScale colorScale;
 
-        RenderResult(Sampler sampler, BufferedImage image, double[][] noiseVals, boolean[][][] voxelVals,
+        RenderResult(Sampler sampler, Sampler colorSampler, BufferedImage image, double[][] noiseVals,
+                     double[][] colorNoiseVals, boolean[][][] voxelVals,
                      double min, double max, int[] buckets, String statisticsText, double sampleTimeMs,
                      long seed, ColorScale colorScale) {
             this.sampler = sampler;
+            this.colorSampler = colorSampler;
             this.image = image;
             this.noiseVals = noiseVals;
+            this.colorNoiseVals = colorNoiseVals;
             this.voxelVals = voxelVals;
             this.min = min;
             this.max = max;
@@ -104,7 +110,8 @@ public class NoisePanel extends JPanel {
         private final boolean useLetExpressions;
         private final ColorScale colorScale;
         private final boolean showChunks;
-        private final String yamlText;
+        private final String elevationYamlText;
+        private final String colorYamlText;
 
         public RenderWorker() {
             this.startTime = System.nanoTime();
@@ -121,7 +128,8 @@ public class NoisePanel extends JPanel {
             this.useLetExpressions = advancedPanel.isUseLetExpressions();
             this.colorScale = settingsPanel.getColorScale();
             this.showChunks = chunk.get();
-            this.yamlText = textArea.getText();
+            this.elevationYamlText = elevationTextArea.getText();
+            this.colorYamlText = colorTextArea.getText().trim();
         }
 
         public void cancelRender() {
@@ -131,10 +139,25 @@ public class NoisePanel extends JPanel {
 
         @Override
         protected RenderResult doInBackground() throws Exception {
-            // Step 1: Compile YAML config -> Sampler (off EDT)
-            consoleLog("Compiling noise config...");
-            DummyPack pack = new DummyPack(platform, new YamlConfiguration(yamlText, "Noise Config"), useLetExpressions);
+            // Step 1: Compile elevation YAML config -> Sampler (off EDT)
+            consoleLog("Compiling elevation config...");
+            DummyPack pack = new DummyPack(platform, new YamlConfiguration(elevationYamlText, "Noise Config"), useLetExpressions);
             Sampler sampler = pack.getSampler();
+            if (cancelled) return null;
+
+            // Step 1b: Compile color sampler (if defined)
+            Sampler colorSampler = null;
+            if (!colorYamlText.isEmpty()) {
+                try {
+                    consoleLog("Compiling color config...");
+                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(colorYamlText, "Color Config"), useLetExpressions);
+                    colorSampler = colorPack.getSampler();
+                    consoleLog("Color sampler compiled successfully.");
+                } catch (Exception e) {
+                    consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());
+                    colorSampler = null;
+                }
+            }
             if (cancelled) return null;
 
             // Step 2: Generate 2D image (pixel loops with cancellation checks)
@@ -152,12 +175,24 @@ public class NoisePanel extends JPanel {
                 }
             }
 
+            // Sample color noise if color sampler exists
+            double[][] colorNoiseVals = null;
+            if (colorSampler != null) {
+                colorNoiseVals = new double[sizeX][sizeZ];
+                for (int x = 0; x < sizeX; x++) {
+                    if (cancelled) return null;
+                    for (int z = 0; z < sizeZ; z++) {
+                        colorNoiseVals[x][z] = colorSampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+                    }
+                }
+            }
+
             long imgEndTime = System.nanoTime();
             double sampleTimeMs = (imgEndTime - imgStartTime) / 1_000_000.0;
 
             if (cancelled) return null;
 
-            // Calculate min/max
+            // Calculate elevation min/max
             double max = Double.MIN_VALUE;
             double min = Double.MAX_VALUE;
             for (double[] noiseVal : noiseVals) {
@@ -167,12 +202,28 @@ public class NoisePanel extends JPanel {
                 }
             }
 
-            // Apply colors
+            // Determine color source and its min/max
+            double[][] colorSource = (colorNoiseVals != null) ? colorNoiseVals : noiseVals;
+            double colorMax = Double.MIN_VALUE;
+            double colorMin = Double.MAX_VALUE;
+            if (colorNoiseVals != null) {
+                for (double[] row : colorNoiseVals) {
+                    for (double v : row) {
+                        colorMax = Math.max(v, colorMax);
+                        colorMin = Math.min(v, colorMin);
+                    }
+                }
+            } else {
+                colorMax = max;
+                colorMin = min;
+            }
+
+            // Apply colors using color source, statistics use elevation
             int[] buckets = new int[sizeX];
             for (int x = 0; x < noiseVals.length; x++) {
                 if (cancelled) return null;
                 for (int z = 0; z < noiseVals[x].length; z++) {
-                    img.setRGB(x, z, colorScale.valueToIRgb(noiseVals[x][z], min, max));
+                    img.setRGB(x, z, colorScale.valueToIRgb(colorSource[x][z], colorMin, colorMax));
                     buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] =
                             buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] + 1;
                 }
@@ -223,7 +274,7 @@ public class NoisePanel extends JPanel {
                 }
             }
 
-            return new RenderResult(sampler, img, heightmapVals, voxelVals,
+            return new RenderResult(sampler, colorSampler, img, heightmapVals, colorNoiseVals, voxelVals,
                     min, max, buckets, statsText, sampleTimeMs, seed, colorScale);
         }
 
@@ -239,12 +290,18 @@ public class NoisePanel extends JPanel {
 
                 // Apply results to UI
                 noiseSeeded = result.sampler;
+                colorSamplerSeeded = result.colorSampler;
                 render = result.image;
                 image.setIcon(new ImageIcon(render));
                 image.setText(null);
 
-                noise3d.setColorScale(result.colorScale);
-                noise3d.setHeightmap(result.noiseVals);
+                if (result.colorNoiseVals != null) {
+                    float[][][] colormap = computeColormap(result.colorNoiseVals, result.colorScale);
+                    noise3d.setHeightmapWithColormap(result.noiseVals, colormap);
+                } else {
+                    noise3d.setColorScale(result.colorScale);
+                    noise3d.setHeightmap(result.noiseVals);
+                }
 
                 if (result.voxelVals != null) {
                     noise3dVox.setBlockspace(result.voxelVals);
@@ -289,9 +346,10 @@ public class NoisePanel extends JPanel {
         }
     }
 
-    public NoisePanel(RSyntaxTextArea textArea, Heightmap3DGLPreviewBufferedGL noise3d, Blockspace3DGLPreviewBufferedGL noise3dVox, NoiseDistributionPanel distributionPanel, final NoiseSettingsPanel settingsPanel, AdvancedSettingsPanel advancedPanel, Platform platform, StatusBar statusBar) {
+    public NoisePanel(RSyntaxTextArea elevationTextArea, RSyntaxTextArea colorTextArea, Heightmap3DGLPreviewBufferedGL noise3d, Blockspace3DGLPreviewBufferedGL noise3dVox, NoiseDistributionPanel distributionPanel, final NoiseSettingsPanel settingsPanel, AdvancedSettingsPanel advancedPanel, Platform platform, StatusBar statusBar) {
         setLayout(new java.awt.BorderLayout());
-        this.textArea = textArea;
+        this.elevationTextArea = elevationTextArea;
+        this.colorTextArea = colorTextArea;
         this.noise3d = noise3d;
         this.noise3dVox = noise3dVox;
         this.statisticsPanel = advancedPanel.getStatisticsPanel();
@@ -419,6 +477,28 @@ public class NoisePanel extends JPanel {
         return -16777216 + (in << 16) + (in << 8) + in;
     }
 
+    private static float[][][] computeColormap(double[][] colorNoiseVals, ColorScale colorScale) {
+        int width = colorNoiseVals.length;
+        int length = colorNoiseVals[0].length;
+        float[][][] colormap = new float[width][length][3];
+
+        double max = Double.MIN_VALUE;
+        double min = Double.MAX_VALUE;
+        for (double[] row : colorNoiseVals) {
+            for (double v : row) {
+                max = Math.max(v, max);
+                min = Math.min(v, min);
+            }
+        }
+
+        for (int x = 0; x < width; x++) {
+            for (int z = 0; z < length; z++) {
+                colormap[x][z] = colorScale.valueToFRgb((float) colorNoiseVals[x][z], (float) min, (float) max);
+            }
+        }
+        return colormap;
+    }
+
     public void update() {
         if (this.error.get()) return;
         this.error.set(true);
@@ -427,8 +507,15 @@ public class NoisePanel extends JPanel {
             this.image.setIcon(new ImageIcon(this.render));
 
             double[][] noiseVals = getNoiseVals(this.settingsPanel.getSeed());
-            this.noise3d.setColorScale(settingsPanel.getColorScale());
-            this.noise3d.setHeightmap(noiseVals);
+
+            if (colorSamplerSeeded != null) {
+                double[][] colorVals = getColorNoiseVals(this.settingsPanel.getSeed());
+                float[][][] colormap = computeColormap(colorVals, settingsPanel.getColorScale());
+                this.noise3d.setHeightmapWithColormap(noiseVals, colormap);
+            } else {
+                this.noise3d.setColorScale(settingsPanel.getColorScale());
+                this.noise3d.setHeightmap(noiseVals);
+            }
 
             if (this.advancedPanel.getVoxelResolution() > 0) {
                 boolean[][][] noiseValsVox = getNoiseVals3d(this.settingsPanel.getSeed());
@@ -451,8 +538,23 @@ public class NoisePanel extends JPanel {
     public void reload() {
         this.error.set(true);
         try {
-            DummyPack pack = new DummyPack(platform, new YamlConfiguration(this.textArea.getText(), "Noise Config"), this.advancedPanel.isUseLetExpressions());
+            DummyPack pack = new DummyPack(platform, new YamlConfiguration(this.elevationTextArea.getText(), "Noise Config"), this.advancedPanel.isUseLetExpressions());
             this.noiseSeeded = pack.getSampler();
+
+            // Compile color sampler if defined
+            String colorText = this.colorTextArea.getText().trim();
+            if (!colorText.isEmpty()) {
+                try {
+                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(colorText, "Color Config"), this.advancedPanel.isUseLetExpressions());
+                    this.colorSamplerSeeded = colorPack.getSampler();
+                } catch (Exception e) {
+                    consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());
+                    this.colorSamplerSeeded = null;
+                }
+            } else {
+                this.colorSamplerSeeded = null;
+            }
+
             this.error.set(false);
         } catch (Exception e) {
             e.printStackTrace();
@@ -558,6 +660,22 @@ public class NoisePanel extends JPanel {
         return noiseVals;
     }
 
+    private double[][] getColorNoiseVals(long seed) {
+        int sizeX = getWidth();
+        int sizeZ = getHeight();
+        double originX = this.settingsPanel.getOriginX();
+        double originZ = this.settingsPanel.getOriginZ();
+        int multiplier = this.settingsPanel.getPerspectiveMultiplier();
+
+        double[][] colorVals = new double[sizeX][sizeZ];
+        for (int x = 0; x < colorVals.length; x++) {
+            for (int z = 0; z < colorVals[x].length; z++) {
+                colorVals[x][z] = colorSamplerSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+            }
+        }
+        return colorVals;
+    }
+
     private BufferedImage getImage(long seed) {
         consoleLog("Rendering noise with seed " + seed);
 
@@ -569,7 +687,6 @@ public class NoisePanel extends JPanel {
         BufferedImage image = new BufferedImage(sizeX, sizeY, BufferedImage.TYPE_INT_ARGB);
         double[][] noiseVals = new double[sizeX][sizeY];
 
-
         long startTime = System.nanoTime();
         for (int x = 0; x < noiseVals.length; x++) {
             for (int z = 0; z < (noiseVals[x]).length; z++) {
@@ -580,6 +697,10 @@ public class NoisePanel extends JPanel {
         long endTime = System.nanoTime();
         double timeMs = (endTime - startTime) / 1000000.0D;
 
+        // Sample color noise if color sampler exists
+        double[][] colorSource = noiseVals;
+        double colorMin, colorMax;
+
         double max = Double.MIN_VALUE;
         double min = Double.MAX_VALUE;
         for (double[] noiseVal : noiseVals) {
@@ -589,15 +710,31 @@ public class NoisePanel extends JPanel {
             }
         }
 
+        if (colorSamplerSeeded != null) {
+            colorSource = new double[sizeX][sizeY];
+            for (int x = 0; x < sizeX; x++) {
+                for (int z = 0; z < sizeY; z++) {
+                    colorSource[x][z] = colorSamplerSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+                }
+            }
+            colorMin = Double.MAX_VALUE;
+            colorMax = Double.MIN_VALUE;
+            for (double[] row : colorSource) {
+                for (double v : row) {
+                    colorMax = Math.max(v, colorMax);
+                    colorMin = Math.min(v, colorMin);
+                }
+            }
+        } else {
+            colorMin = min;
+            colorMax = max;
+        }
 
         int[] buckets = new int[sizeX];
+        ColorScale colorScale = this.settingsPanel.getColorScale();
         for (int x = 0; x < noiseVals.length; x++) {
             for (int z = 0; z < (noiseVals[x]).length; z++) {
-                if (colorCollection != null) {
-                    image.setRGB(x, z, colorCollection.get(noiseSeeded, x * multiplier + originX, z * multiplier + originZ, seed) - 16777216);
-                } else {
-                    image.setRGB(x, z, this.settingsPanel.getColorScale().valueToIRgb(noiseVals[x][z], min, max));
-                }
+                image.setRGB(x, z, colorScale.valueToIRgb(colorSource[x][z], colorMin, colorMax));
                 buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] = buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] + 1;
             }
         }

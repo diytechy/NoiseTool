@@ -53,6 +53,18 @@ public class Heightmap3DGLPreviewBufferedGL extends BufferedGLPanel {
         setHeightmap(cast2f(heightmap));
     }
 
+    public void setHeightmapWithColormap(double[][] heightmap, float[][][] colormap) {
+        float[][] heightmapF = cast2f(heightmap);
+        heightmapModel = new HeightmapModel(heightmapF, colormap,
+            Math.max(heightmapF.length, heightmapF[0].length));
+        minYLookatHeight = -64;
+        maxYLookatHeight = 320;
+        startNewModel();
+        loadModel(heightmapModel);
+        endNewModel();
+        display();
+    }
+
     private float[][] cast2f(double[][] array2d) {
         float[][] array2f = new float[array2d.length][array2d[0].length];
         for(int i = 0, width = array2d.length; i < width; i++) {

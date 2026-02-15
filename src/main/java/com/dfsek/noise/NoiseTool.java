@@ -53,7 +53,9 @@ import java.util.function.Supplier;
 public final class NoiseTool extends JFrame implements SearchListener {
 
     private final CollapsibleSectionPanel csp;
-    private final RSyntaxTextArea textArea;
+    private final RSyntaxTextArea elevationTextArea;
+    private final RSyntaxTextArea colorTextArea;
+    private RSyntaxTextArea activeTextArea;
     private final StatusBar statusBar;
     private final JFileChooser fileChooser = new JFileChooser();
     private final JFileChooser imageChooser = new JFileChooser();
@@ -98,24 +100,74 @@ public final class NoiseTool extends JFrame implements SearchListener {
         statusBar = new StatusBar();
         add(statusBar, BorderLayout.SOUTH);
 
-        // Text area and error strip to the right of the text area
+        // --- Dual editor setup (Elevation + Color) ---
         JPanel textPanel = new JPanel(new BorderLayout());
 
-        textArea = new RSyntaxTextArea(35, 45);
-        textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_YAML);
-        textArea.setCodeFoldingEnabled(true);
-        textArea.setMarkOccurrences(true);
-        textArea.setTabsEmulated(true);
-        textArea.setTabSize(2);
+        // Create both text areas with identical settings
+        elevationTextArea = createEditorTextArea();
+        colorTextArea = createEditorTextArea();
+        activeTextArea = elevationTextArea;
 
-        textArea.setText(config);
-        RTextScrollPane sp = new RTextScrollPane(textArea);
+        // Restore editor content from settings, or use defaults
+        String savedElevation = settings.getProperty("elevationText", "");
+        if (!savedElevation.isEmpty()) {
+            elevationTextArea.setText(savedElevation);
+            elevationTextArea.setCaretPosition(0);
+        } else {
+            elevationTextArea.setText(config);
+            elevationTextArea.setCaretPosition(0);
+        }
+        String savedColor = settings.getProperty("colorText", "");
+        colorTextArea.setText(savedColor);
+        colorTextArea.setCaretPosition(0);
+
+        // Build editor panels for each tab
+        JPanel elevationEditorPanel = new JPanel(new BorderLayout());
+        elevationEditorPanel.add(new RTextScrollPane(elevationTextArea), BorderLayout.CENTER);
+        elevationEditorPanel.add(new ErrorStrip(elevationTextArea), BorderLayout.LINE_END);
+
+        JPanel colorEditorPanel = new JPanel(new BorderLayout());
+        colorEditorPanel.add(new RTextScrollPane(colorTextArea), BorderLayout.CENTER);
+        colorEditorPanel.add(new ErrorStrip(colorTextArea), BorderLayout.LINE_END);
+
+        // CardLayout to switch between editors
+        CardLayout editorCardLayout = new CardLayout();
+        JPanel editorCards = new JPanel(editorCardLayout);
+        editorCards.add(elevationEditorPanel, "Elevation");
+        editorCards.add(colorEditorPanel, "Color");
+
+        // Editor tab buttons
+        JPanel editorTabRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        ButtonGroup editorTabGroup = new ButtonGroup();
+
+        JToggleButton elevationTab = new JToggleButton("Elevation");
+        elevationTab.setFocusPainted(false);
+        elevationTab.setMargin(new Insets(4, 12, 4, 12));
+        elevationTab.setSelected(true);
+        editorTabGroup.add(elevationTab);
+        editorTabRow.add(elevationTab);
+
+        JToggleButton colorTab = new JToggleButton("Color");
+        colorTab.setFocusPainted(false);
+        colorTab.setMargin(new Insets(4, 12, 4, 12));
+        editorTabGroup.add(colorTab);
+        editorTabRow.add(colorTab);
+
+        elevationTab.addActionListener(e -> {
+            editorCardLayout.show(editorCards, "Elevation");
+            activeTextArea = elevationTextArea;
+        });
+        colorTab.addActionListener(e -> {
+            editorCardLayout.show(editorCards, "Color");
+            activeTextArea = colorTextArea;
+        });
+
+        // Wrap editor cards in CollapsibleSectionPanel for find/replace toolbars
         csp = new CollapsibleSectionPanel();
-        csp.add(sp);
-        textPanel.add(csp, BorderLayout.CENTER);
+        csp.add(editorCards);
 
-        ErrorStrip errorStrip = new ErrorStrip(textArea);
-        textPanel.add(errorStrip, BorderLayout.LINE_END);
+        textPanel.add(editorTabRow, BorderLayout.NORTH);
+        textPanel.add(csp, BorderLayout.CENTER);
 
         settingsPanel = new NoiseSettingsPanel(settings);
         advancedPanel = new AdvancedSettingsPanel(settings);
@@ -126,13 +178,21 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
         CompletionProvider provider = createCompletionProvider(pack.getRegistry(NOISE_REGISTRY_KEY));
 
-        AutoCompletion ac = new AutoCompletion(provider);
-        ac.install(textArea);
-        ac.setShowDescWindow(true);
-        ac.setAutoCompleteEnabled(true);
-        ac.setAutoActivationEnabled(true);
-        ac.setAutoCompleteSingleChoices(false);
-        ac.setAutoActivationDelay(200);
+        AutoCompletion acElevation = new AutoCompletion(provider);
+        acElevation.install(elevationTextArea);
+        acElevation.setShowDescWindow(true);
+        acElevation.setAutoCompleteEnabled(true);
+        acElevation.setAutoActivationEnabled(true);
+        acElevation.setAutoCompleteSingleChoices(false);
+        acElevation.setAutoActivationDelay(200);
+
+        AutoCompletion acColor = new AutoCompletion(provider);
+        acColor.install(colorTextArea);
+        acColor.setShowDescWindow(true);
+        acColor.setAutoCompleteEnabled(true);
+        acColor.setAutoActivationEnabled(true);
+        acColor.setAutoCompleteSingleChoices(false);
+        acColor.setAutoActivationDelay(200);
 
         NoiseDistributionPanel distributionPanel = new NoiseDistributionPanel();
 
@@ -140,7 +200,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
         Heightmap3DGLPreviewBufferedGL noise3d = new Heightmap3DGLPreviewBufferedGL();
         Blockspace3DGLPreviewBufferedGL noise3dVox = new Blockspace3DGLPreviewBufferedGL();
 
-        this.noise = new NoisePanel(textArea, noise3d, noise3dVox, distributionPanel, settingsPanel, advancedPanel, platform, statusBar);
+        this.noise = new NoisePanel(elevationTextArea, colorTextArea, noise3d, noise3dVox, distributionPanel, settingsPanel, advancedPanel, platform, statusBar);
 
         // Console setup
         sysout = new JTextArea();
@@ -269,6 +329,16 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
         return provider;
 
+    }
+
+    private static RSyntaxTextArea createEditorTextArea() {
+        RSyntaxTextArea ta = new RSyntaxTextArea(35, 45);
+        ta.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_YAML);
+        ta.setCodeFoldingEnabled(true);
+        ta.setMarkOccurrences(true);
+        ta.setTabsEmulated(true);
+        ta.setTabSize(2);
+        return ta;
     }
 
     private static void addTabButton(JPanel row, ButtonGroup group, JPanel cards, CardLayout layout, String name, Component content, boolean selected) {
@@ -432,7 +502,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
             // Read file into text area
             try {
-                textArea.setText(IOUtils.toString(new FileInputStream(lastOpenedFile), Charset.defaultCharset()));
+                elevationTextArea.setText(IOUtils.toString(new FileInputStream(lastOpenedFile), Charset.defaultCharset()));
             } catch (IOException ex) {
                 ex.printStackTrace();
                 scheduleAutoRenderCheck();
@@ -529,6 +599,10 @@ public final class NoiseTool extends JFrame implements SearchListener {
         props.setProperty("voxelTopY", String.valueOf(advancedPanel.getVoxelTopY()));
         props.setProperty("editorVerboseConsole", String.valueOf(advancedPanel.isEditorVerboseConsole()));
 
+        // Editor contents
+        props.setProperty("elevationText", elevationTextArea.getText());
+        props.setProperty("colorText", colorTextArea.getText());
+
         if (!SETTINGS_DIR.exists()) {
             SETTINGS_DIR.mkdirs();
         }
@@ -557,7 +631,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
     @Override
     public String getSelectedText() {
-        return textArea.getSelectedText();
+        return activeTextArea.getSelectedText();
     }
 
     public NoisePanel getNoise() {
@@ -599,22 +673,22 @@ public final class NoiseTool extends JFrame implements SearchListener {
         switch(type) {
             default: // Prevent FindBugs warning later
             case MARK_ALL:
-                result = SearchEngine.markAll(textArea, context);
+                result = SearchEngine.markAll(activeTextArea, context);
                 break;
             case FIND:
-                result = SearchEngine.find(textArea, context);
+                result = SearchEngine.find(activeTextArea, context);
                 if(!result.wasFound() || result.isWrapped()) {
-                    UIManager.getLookAndFeel().provideErrorFeedback(textArea);
+                    UIManager.getLookAndFeel().provideErrorFeedback(activeTextArea);
                 }
                 break;
             case REPLACE:
-                result = SearchEngine.replace(textArea, context);
+                result = SearchEngine.replace(activeTextArea, context);
                 if(!result.wasFound() || result.isWrapped()) {
-                    UIManager.getLookAndFeel().provideErrorFeedback(textArea);
+                    UIManager.getLookAndFeel().provideErrorFeedback(activeTextArea);
                 }
                 break;
             case REPLACE_ALL:
-                result = SearchEngine.replaceAll(textArea, context);
+                result = SearchEngine.replaceAll(activeTextArea, context);
                 JOptionPane.showMessageDialog(null, result.getCount() +
                         " occurrences replaced.");
                 break;
@@ -645,9 +719,16 @@ public final class NoiseTool extends JFrame implements SearchListener {
     }
 
     public RSyntaxTextArea getTextArea() {
-        return textArea;
+        return activeTextArea;
     }
 
+    public RSyntaxTextArea getElevationTextArea() {
+        return elevationTextArea;
+    }
+
+    public RSyntaxTextArea getColorTextArea() {
+        return colorTextArea;
+    }
 
     public JFileChooser getImageChooser() {
         return imageChooser;
