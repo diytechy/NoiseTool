@@ -1,7 +1,7 @@
 package com.dfsek.noise.swing;
 
 import com.dfsek.noise.platform.DummyPack;
-import com.dfsek.tectonic.yaml.YamlConfiguration;
+import com.dfsek.noise.config.HighAliasYamlConfiguration;
 import com.dfsek.terra.api.Platform;
 import com.dfsek.seismic.type.sampler.Sampler;
 import com.dfsek.terra.api.util.mutable.MutableBoolean;
@@ -147,7 +147,7 @@ public class NoisePanel extends JPanel {
         protected RenderResult doInBackground() throws Exception {
             // Step 1: Compile elevation YAML config -> Sampler (off EDT)
             consoleLog("Compiling elevation config...");
-            DummyPack pack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonYamlText, elevationYamlText), "Noise Config"), useLetExpressions);
+            DummyPack pack = new DummyPack(platform, new HighAliasYamlConfiguration(prependCommon(commonYamlText, elevationYamlText), "Noise Config"), useLetExpressions);
             Sampler sampler = pack.getSampler();
             if (cancelled) return null;
 
@@ -156,7 +156,7 @@ public class NoisePanel extends JPanel {
             if (!colorYamlText.isEmpty()) {
                 try {
                     consoleLog("Compiling color config...");
-                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonYamlText, colorYamlText), "Color Config"), useLetExpressions);
+                    DummyPack colorPack = new DummyPack(platform, new HighAliasYamlConfiguration(prependCommon(commonYamlText, colorYamlText), "Color Config"), useLetExpressions);
                     colorSampler = colorPack.getSampler();
                     consoleLog("Color sampler compiled successfully.");
                 } catch (Exception e) {
@@ -555,14 +555,14 @@ public class NoisePanel extends JPanel {
         this.error.set(true);
         try {
             String commonText = this.commonTextArea.getText();
-            DummyPack pack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonText, this.elevationTextArea.getText()), "Noise Config"), this.advancedPanel.isUseLetExpressions());
+            DummyPack pack = new DummyPack(platform, new HighAliasYamlConfiguration(prependCommon(commonText, this.elevationTextArea.getText()), "Noise Config"), this.advancedPanel.isUseLetExpressions());
             this.noiseSeeded = pack.getSampler();
 
             // Compile color sampler if defined
             String colorText = this.colorTextArea.getText().trim();
             if (!colorText.isEmpty()) {
                 try {
-                    DummyPack colorPack = new DummyPack(platform, new YamlConfiguration(prependCommon(commonText, colorText), "Color Config"), this.advancedPanel.isUseLetExpressions());
+                    DummyPack colorPack = new DummyPack(platform, new HighAliasYamlConfiguration(prependCommon(commonText, colorText), "Color Config"), this.advancedPanel.isUseLetExpressions());
                     this.colorSamplerSeeded = colorPack.getSampler();
                 } catch (Exception e) {
                     consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());

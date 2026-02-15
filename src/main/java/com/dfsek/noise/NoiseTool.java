@@ -9,7 +9,7 @@ import com.dfsek.noise.swing.NoiseSettingsPanel;
 import com.dfsek.noise.swing.StatusBar;
 import com.dfsek.noise.swing.actions.*;
 import com.dfsek.tectonic.api.config.template.object.ObjectTemplate;
-import com.dfsek.tectonic.yaml.YamlConfiguration;
+import com.dfsek.noise.config.HighAliasYamlConfiguration;
 import com.dfsek.seismic.type.sampler.Sampler;
 import com.dfsek.terra.api.registry.Registry;
 import com.dfsek.terra.api.util.reflection.TypeKey;
@@ -195,7 +195,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
         // Noise panels and other stuff at the right side
         PlatformImpl platform = new PlatformImpl();
-        DummyPack pack = new DummyPack(platform, new YamlConfiguration(config, "Noise Config"), advancedPanel.isUseLetExpressions());
+        DummyPack pack = new DummyPack(platform, new HighAliasYamlConfiguration(config, "Noise Config"), advancedPanel.isUseLetExpressions());
 
         CompletionProvider provider = createCompletionProvider(pack.getRegistry(NOISE_REGISTRY_KEY));
 
