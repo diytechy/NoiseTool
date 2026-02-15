@@ -20,6 +20,8 @@ public class Heightmap3DGLPreviewBufferedGL extends BufferedGLPanel {
      */
     private ColorScale colorscale = ColorScale.GRAYSCALE_0_1;
 
+    private float yScale = 200;
+
     private HeightmapModel heightmapModel;
 
     public Heightmap3DGLPreviewBufferedGL() {
@@ -38,10 +40,10 @@ public class Heightmap3DGLPreviewBufferedGL extends BufferedGLPanel {
         //Create colormap from heightmap according to the colorscale
         float[][][] colormap = colormapFromHeightmap(heightmap);
 
-        heightmapModel = new HeightmapModel(heightmap, colormap, Math.max(heightmap.length, heightmap[0].length));
+        applyYScale(heightmap);
+        computeCameraBounds(heightmap);
 
-        minYLookatHeight = -64;
-        maxYLookatHeight = 320;
+        heightmapModel = new HeightmapModel(heightmap, colormap, Math.max(heightmap.length, heightmap[0].length));
 
         startNewModel();
         loadModel(heightmapModel);
@@ -55,10 +57,10 @@ public class Heightmap3DGLPreviewBufferedGL extends BufferedGLPanel {
 
     public void setHeightmapWithColormap(double[][] heightmap, float[][][] colormap) {
         float[][] heightmapF = cast2f(heightmap);
+        applyYScale(heightmapF);
+        computeCameraBounds(heightmapF);
         heightmapModel = new HeightmapModel(heightmapF, colormap,
             Math.max(heightmapF.length, heightmapF[0].length));
-        minYLookatHeight = -64;
-        maxYLookatHeight = 320;
         startNewModel();
         loadModel(heightmapModel);
         endNewModel();
@@ -79,9 +81,34 @@ public class Heightmap3DGLPreviewBufferedGL extends BufferedGLPanel {
         this.colorscale = colorscale;
     }
 
+    public void setYScale(float yScale) {
+        this.yScale = yScale;
+    }
+
     public void setLookAtHeightSpan(float minLookAtHeight, float maxLookAtHeight) {
         minYLookatHeight = minLookAtHeight;
         maxYLookatHeight = maxLookAtHeight;
+    }
+
+    private void applyYScale(float[][] heightmap) {
+        for (int x = 0; x < heightmap.length; x++) {
+            for (int z = 0; z < heightmap[0].length; z++) {
+                heightmap[x][z] = heightmap[x][z] * yScale;
+            }
+        }
+    }
+
+    private void computeCameraBounds(float[][] heightmap) {
+        float hMin = Float.MAX_VALUE, hMax = -Float.MAX_VALUE;
+        for (float[] row : heightmap) {
+            for (float v : row) {
+                hMin = Math.min(hMin, v);
+                hMax = Math.max(hMax, v);
+            }
+        }
+        float margin = Math.max((hMax - hMin) * 0.25f, 1.0f);
+        minYLookatHeight = hMin - margin;
+        maxYLookatHeight = hMax + margin;
     }
 
     private float[][][] colormapFromHeightmap(float[][] heightmap) {

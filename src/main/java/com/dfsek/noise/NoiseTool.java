@@ -598,6 +598,7 @@ public final class NoiseTool extends JFrame implements SearchListener {
         props.setProperty("voxelBottomY", String.valueOf(advancedPanel.getVoxelBottomY()));
         props.setProperty("voxelTopY", String.valueOf(advancedPanel.getVoxelTopY()));
         props.setProperty("editorVerboseConsole", String.valueOf(advancedPanel.isEditorVerboseConsole()));
+        props.setProperty("yScale", String.valueOf(advancedPanel.getYScale()));
 
         // Editor contents
         props.setProperty("elevationText", elevationTextArea.getText());

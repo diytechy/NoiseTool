@@ -4,7 +4,6 @@ import com.dfsek.noise.platform.DummyPack;
 import com.dfsek.tectonic.yaml.YamlConfiguration;
 import com.dfsek.terra.api.Platform;
 import com.dfsek.seismic.type.sampler.Sampler;
-import com.dfsek.terra.api.util.collection.ProbabilityCollection;
 import com.dfsek.terra.api.util.mutable.MutableBoolean;
 import net.worldsynth.glpreview.heightmap.Heightmap3DGLPreviewBufferedGL;
 import net.worldsynth.glpreview.voxel.Blockspace3DGLPreviewBufferedGL;
@@ -71,11 +70,12 @@ public class NoisePanel extends JPanel {
         final double sampleTimeMs;
         final long seed;
         final ColorScale colorScale;
+        final float yScale;
 
         RenderResult(Sampler sampler, Sampler colorSampler, BufferedImage image, double[][] noiseVals,
                      double[][] colorNoiseVals, boolean[][][] voxelVals,
                      double min, double max, int[] buckets, String statisticsText, double sampleTimeMs,
-                     long seed, ColorScale colorScale) {
+                     long seed, ColorScale colorScale, float yScale) {
             this.sampler = sampler;
             this.colorSampler = colorSampler;
             this.image = image;
@@ -89,6 +89,7 @@ public class NoisePanel extends JPanel {
             this.sampleTimeMs = sampleTimeMs;
             this.seed = seed;
             this.colorScale = colorScale;
+            this.yScale = yScale;
         }
     }
 
@@ -112,6 +113,7 @@ public class NoisePanel extends JPanel {
         private final boolean showChunks;
         private final String elevationYamlText;
         private final String colorYamlText;
+        private final float yScale;
 
         public RenderWorker() {
             this.startTime = System.nanoTime();
@@ -130,6 +132,7 @@ public class NoisePanel extends JPanel {
             this.showChunks = chunk.get();
             this.elevationYamlText = elevationTextArea.getText();
             this.colorYamlText = colorTextArea.getText().trim();
+            this.yScale = advancedPanel.getYScale() / (float) this.multiplier;
         }
 
         public void cancelRender() {
@@ -275,7 +278,7 @@ public class NoisePanel extends JPanel {
             }
 
             return new RenderResult(sampler, colorSampler, img, heightmapVals, colorNoiseVals, voxelVals,
-                    min, max, buckets, statsText, sampleTimeMs, seed, colorScale);
+                    min, max, buckets, statsText, sampleTimeMs, seed, colorScale, yScale);
         }
 
         @Override
@@ -295,6 +298,7 @@ public class NoisePanel extends JPanel {
                 image.setIcon(new ImageIcon(render));
                 image.setText(null);
 
+                noise3d.setYScale(result.yScale);
                 if (result.colorNoiseVals != null) {
                     float[][][] colormap = computeColormap(result.colorNoiseVals, result.colorScale);
                     noise3d.setHeightmapWithColormap(result.noiseVals, colormap);
@@ -508,6 +512,7 @@ public class NoisePanel extends JPanel {
 
             double[][] noiseVals = getNoiseVals(this.settingsPanel.getSeed());
 
+            this.noise3d.setYScale(advancedPanel.getYScale() / (float) settingsPanel.getPerspectiveMultiplier());
             if (colorSamplerSeeded != null) {
                 double[][] colorVals = getColorNoiseVals(this.settingsPanel.getSeed());
                 float[][][] colormap = computeColormap(colorVals, settingsPanel.getColorScale());

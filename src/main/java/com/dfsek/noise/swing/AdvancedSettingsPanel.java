@@ -9,6 +9,7 @@ public class AdvancedSettingsPanel extends JPanel {
     private final JSpinner voxelResolution;
     private final JSpinner voxelBottomY;
     private final JSpinner voxelTopY;
+    private final JSpinner yScaleSpinner;
     private final JCheckBox editorVerboseConsole;
     private final JTextArea statisticsPanel;
 
@@ -22,6 +23,7 @@ public class AdvancedSettingsPanel extends JPanel {
         int voxBottom = Integer.parseInt(settings.getProperty("voxelBottomY", "-64"));
         int voxTop = Integer.parseInt(settings.getProperty("voxelTopY", "319"));
         boolean verbose = Boolean.parseBoolean(settings.getProperty("editorVerboseConsole", "false"));
+        int yScl = Integer.parseInt(settings.getProperty("yScale", "200"));
 
         useLetExpressions = new JCheckBox();
         useLetExpressions.setSelected(useLet);
@@ -29,6 +31,7 @@ public class AdvancedSettingsPanel extends JPanel {
         voxelResolution = new JSpinner(new SpinnerNumberModel(voxRes, 0, Integer.MAX_VALUE, 1));
         voxelBottomY = new JSpinner(new SpinnerNumberModel(voxBottom, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
         voxelTopY = new JSpinner(new SpinnerNumberModel(voxTop, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
+        yScaleSpinner = new JSpinner(new SpinnerNumberModel(yScl, 1, 10000, 10));
 
         editorVerboseConsole = new JCheckBox();
         editorVerboseConsole.setSelected(verbose);
@@ -90,6 +93,21 @@ public class AdvancedSettingsPanel extends JPanel {
 
         settingsSection.add(voxelPanel);
 
+        // 3D Preview section
+        JPanel preview3dPanel = new JPanel(new GridBagLayout());
+        preview3dPanel.setBorder(BorderFactory.createTitledBorder("3D Preview"));
+        gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 8, 4, 8);
+        gbc.anchor = GridBagConstraints.WEST;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
+        preview3dPanel.add(new JLabel("Y Scale: "), gbc);
+        gbc.gridx = 1; gbc.weightx = 1;
+        preview3dPanel.add(yScaleSpinner, gbc);
+
+        settingsSection.add(preview3dPanel);
+
         add(settingsSection, BorderLayout.NORTH);
 
         // Statistics section at the bottom
@@ -122,6 +140,10 @@ public class AdvancedSettingsPanel extends JPanel {
 
     public boolean isEditorVerboseConsole() {
         return editorVerboseConsole.isSelected();
+    }
+
+    public int getYScale() {
+        return ((Number) yScaleSpinner.getValue()).intValue();
     }
 
     public JTextArea getStatisticsPanel() {
