@@ -129,3 +129,49 @@ Okay, this may be a source of confusion.  I am not interested in pixel units, I 
 ####################################################
 
 Create a plan to add another editor pane with a tab (Next to "Elevation" and "Color" that can contain common sampler definitions (with anchors) that can be referenced by the elevation and color editor panes (through aliases)
+
+#######################################################
+
+Now when I run with multiple aliases in this new common tab, I eventually run into an error:
+
+org.yaml.snakeyaml.error.YAMLException: Number of aliases for non-scalar nodes exceeds the specified max=50
+
+Is there a way this limit can be increased for this project to overcome this error?
+
+############################################################
+
+I am loading the content of "C:\Projects\ORIGEN2\.artifacts\resolved_samplers.yml" to the "Common" editor tab, and want you to design an expression sampler and color definition.  There are two exports expected for this activity:
+
+1. Design a sampler (text yaml definition) that I can copy into the "color" tab that outputs a double representing color transitions as outlined below.
+2. Design a text block I can copy into the "Color scale:" that will properly map the double from the color sampler to the individual rgb channels outlined below.
+
+Color breaks:
+r, g, b
+0.0, 0.0, 0.0 <- Ocean Depth
+0.5, 0.0, 1.0 <- Ocean Surface
+
+
+For normal land:
+g = 1.0
+b = temperature range.
+r = precipitation range.
+
+For mesa range:
+r = 1.0
+g = 0.5
+b = temperature range?
+Note: Mesas should always be dry... maybe?  Or not necessary?
+
+For mountain ranges:
+Push everything up to 1,1,1 as elevation increases.
+
+For rivers:
+b = 1.0
+g = elevation range.
+r = 0.0
+
+For oceans:
+b = 1.0
+r = 0.5
+g = 0
+Push everything down to 0,0,0 as elevation decreases.
