@@ -415,7 +415,10 @@ public class NoisePanel extends JPanel {
 
                             settingsPanel.setOriginX(settingsPanel.getOriginX() - deltaX * multiplier);
                             settingsPanel.setOriginZ(settingsPanel.getOriginZ() - deltaY * multiplier);
+                            // Re-render at the new origin, then reset panel position
+                            // Both changes paint in the same repaint cycle, avoiding a visual jump
                             NoisePanel.this.update();
+                            imagePanel.setLocation(0, 0);
                         }
                     }
 
