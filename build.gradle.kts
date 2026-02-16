@@ -6,7 +6,14 @@ plugins {
 group = "com.dfsek"
 version = "1.2.2"
 
+// Use -PuseLocalTerra to resolve Terra dependencies from local Maven (~/.m2/repository) first
+val useLocalTerra = project.hasProperty("useLocalTerra")
+
 repositories {
+    if (useLocalTerra) {
+        mavenLocal()
+        logger.lifecycle("Using local Maven repository for Terra dependencies")
+    }
     mavenCentral()
     maven {
         name = "Solo Studios"
