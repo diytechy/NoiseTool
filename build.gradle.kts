@@ -6,15 +6,16 @@ plugins {
 group = "com.dfsek"
 version = "1.2.2"
 
-// Use -PuseLocalTerra to resolve Terra dependencies from local Maven (~/.m2/repository) first
-val useLocalTerra = project.hasProperty("useLocalTerra")
-
 repositories {
-    if (useLocalTerra) {
-        mavenLocal()
-        logger.lifecycle("Using local Maven repository for Terra dependencies")
-    }
     mavenCentral()
+    maven {
+        name = "Repsy-Terra"
+        url = uri("https://repo.repsy.io/mvn/diytechy/terra")
+    }
+    maven {
+        name = "Repsy-DendryTerra"
+        url = uri("https://repo.repsy.io/mvn/diytechy/dendryterra")
+    }
     maven {
         name = "Solo Studios"
         url = uri("https://maven.solo-studios.ca/releases")
@@ -33,7 +34,7 @@ repositories {
     }
 }
 
-val terraGitHash = "a159debe3"
+val terraGitHash = "ec788bf"
 
 val terraAddon: Configuration by configurations.creating
 val bootstrapTerraAddon: Configuration by configurations.creating
@@ -42,15 +43,16 @@ dependencies {
     testImplementation("org.junit.jupiter", "junit-jupiter", "5.13.0")
     testRuntimeOnly("org.junit.platform", "junit-platform-launcher")
     implementation("com.dfsek:seismic:2.5.7")
-    implementation("com.dfsek.terra:api:7.0.0-BETA+$terraGitHash")
-    implementation("com.dfsek.terra:base:7.0.0-BETA+$terraGitHash")
+    implementation("com.dfsek.terra:api:7.0.0-BETA-$terraGitHash")
+    implementation("com.dfsek.terra:base:7.0.0-BETA-$terraGitHash")
 
     // Bootstrap addon loaders
-    bootstrapTerraAddon("com.dfsek.terra:manifest-addon-loader:1.0.0-BETA+$terraGitHash")
+    bootstrapTerraAddon("com.dfsek.terra:manifest-addon-loader:1.0.0-BETA-$terraGitHash")
 
     // Terra addons for noise configuration
-    terraAddon("com.dfsek.terra:config-noise-function:1.2.0-BETA+$terraGitHash")
-    terraAddon("com.dfsek.terra:library-image:1.1.0-BETA+$terraGitHash")
+    terraAddon("com.dfsek.terra:config-noise-function:1.2.0-BETA-$terraGitHash")
+    terraAddon("com.dfsek.terra:library-image:1.1.0-BETA-$terraGitHash")
+    terraAddon("com.github.diytechy:dendryterra:1.0.0-BETA-1")
 
     compileOnly("org.jetbrains:annotations:26.0.2")
     implementation("commons-io:commons-io:2.19.0")
