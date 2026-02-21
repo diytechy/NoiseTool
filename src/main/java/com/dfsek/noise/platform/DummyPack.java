@@ -53,12 +53,21 @@ import com.dfsek.terra.registry.ShortcutHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.dfsek.noise.config.HighAliasYamlConfiguration;
+import com.dfsek.terra.api.properties.Properties;
+import com.dfsek.tectonic.api.config.template.ConfigTemplate;
+
+import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
 
@@ -83,6 +92,7 @@ public class DummyPack implements ConfigPack {
 
     private final boolean useLetExpressions;
 
+    @SuppressWarnings("unchecked")
     public DummyPack(Platform platform, Configuration noise, boolean useLetExpressions) {
         this.useLetExpressions = useLetExpressions;
 
@@ -99,11 +109,75 @@ public class DummyPack implements ConfigPack {
                 .stream()
                 .collect(HashMap::new, (map, addon) -> map.put(addon, Versions.getVersionRange(addon.getVersion(), true, addon.getVersion(), true)), HashMap::putAll);
 
+        // Extract samplers from config for sequential loading
+        Map<String, Object> samplerConfigs = null;
+        Configuration strippedNoise = noise;
+        if (noise.contains("samplers")) {
+            Object samplersObj = noise.get("samplers");
+            if (samplersObj instanceof Map) {
+                samplerConfigs = (Map<String, Object>) samplersObj;
+                // Create a config without samplers so NoiseAddon loads an empty template
+                Map<String, Object> strippedMap = new LinkedHashMap<>();
+                // Copy all keys except samplers
+                for (String key : List.of("type", "expression", "dimensions", "variables", "functions",
+                        "sampler", "frequency", "salt", "amplitude", "octaves")) {
+                    if (noise.contains(key)) {
+                        strippedMap.put(key, noise.get(key));
+                    }
+                }
+                strippedMap.put("samplers", new LinkedHashMap<>()); // empty samplers
+                strippedNoise = new HighAliasYamlConfiguration(strippedMap, noise.getName());
+            }
+        }
 
+        // Fire event with stripped config — types get registered, packSamplers created empty
+        final Configuration eventConfig = strippedNoise;
         platform.getEventManager().callEvent(
-                new ConfigPackPreLoadEvent(this, template -> selfLoader.load(template, noise)));
+                new ConfigPackPreLoadEvent(this, template -> selfLoader.load(template, eventConfig)));
 
+        // Sequential sampler loading: load each in dependency order.
+        // Uses reflection to access addon classes (they live in a child classloader).
+        if (samplerConfigs != null && !samplerConfigs.isEmpty()) {
+            Properties packCtx = context.getByClassName("com.dfsek.terra.addons.noise.PackSamplerContext");
+            if (packCtx != null) {
+                try {
+                    Method getSamplers = packCtx.getClass().getMethod("getSamplers");
+                    Method getFunctions = packCtx.getClass().getMethod("getFunctions");
+                    Map<String, Object> samplerMap = (Map<String, Object>) getSamplers.invoke(packCtx);
+                    Map<String, Object> functionMap = (Map<String, Object>) getFunctions.invoke(packCtx);
 
+                    // Use the addon classloader to create NoiseConfigPackTemplate instances
+                    Class<?> templateClass = packCtx.getClass().getClassLoader()
+                            .loadClass("com.dfsek.terra.addons.noise.NoiseConfigPackTemplate");
+                    Method getTemplateSamplers = templateClass.getMethod("getSamplers");
+                    Method getTemplateFunctions = templateClass.getMethod("getFunctions");
+
+                    // Load functions first (no inter-dependencies)
+                    if (noise.contains("functions")) {
+                        Map<String, Object> funcMap = new LinkedHashMap<>();
+                        funcMap.put("functions", noise.get("functions"));
+                        Object funcTemplate = templateClass.getDeclaredConstructor().newInstance();
+                        selfLoader.load((ConfigTemplate) funcTemplate, new HighAliasYamlConfiguration(funcMap, "Functions"));
+                        functionMap.putAll((Map<String, Object>) getTemplateFunctions.invoke(funcTemplate));
+                    }
+
+                    List<String> ordered = topologicalSort(samplerConfigs);
+                    logger.info("Loading {} pack samplers in dependency order", ordered.size());
+                    for (String name : ordered) {
+                        Map<String, Object> singleSampler = new LinkedHashMap<>();
+                        singleSampler.put(name, samplerConfigs.get(name));
+                        Map<String, Object> miniMap = new LinkedHashMap<>();
+                        miniMap.put("samplers", singleSampler);
+                        Object miniTemplate = templateClass.getDeclaredConstructor().newInstance();
+                        selfLoader.load((ConfigTemplate) miniTemplate, new HighAliasYamlConfiguration(miniMap, "Sampler: " + name));
+                        samplerMap.putAll((Map<String, Object>) getTemplateSamplers.invoke(miniTemplate));
+                    }
+                    logger.info("All pack samplers loaded successfully");
+                } catch (Exception e) {
+                    logger.error("Sequential sampler loading failed", e);
+                }
+            }
+        }
 
         this.key = RegistryKey.of("noise", "noise");
 
@@ -120,6 +194,55 @@ public class DummyPack implements ConfigPack {
         };
 
         this.noiseSampler = selfLoader.load(noiseSamplerObjectTemplate, noise).get();
+    }
+
+    /**
+     * Topologically sort sampler names by dependency (dependencies first).
+     * Scans expression text for references to other known sampler names.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<String> topologicalSort(Map<String, Object> samplerConfigs) {
+        Set<String> knownNames = samplerConfigs.keySet();
+
+        // Build dependency graph
+        Map<String, Set<String>> deps = new LinkedHashMap<>();
+        for (String name : knownNames) {
+            deps.put(name, new HashSet<>());
+            Object config = samplerConfigs.get(name);
+            if (config != null) {
+                String configText = config.toString();
+                for (String candidate : knownNames) {
+                    if (!candidate.equals(name) &&
+                        (configText.contains(candidate + "(") || configText.contains(candidate + " ("))) {
+                        deps.get(name).add(candidate);
+                    }
+                }
+            }
+        }
+
+        // Topological sort (Kahn's algorithm)
+        List<String> result = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+        Set<String> visiting = new HashSet<>();
+
+        for (String name : knownNames) {
+            visit(name, deps, visited, visiting, result);
+        }
+
+        return result;
+    }
+
+    private static void visit(String name, Map<String, Set<String>> deps,
+                              Set<String> visited, Set<String> visiting, List<String> result) {
+        if (visited.contains(name)) return;
+        if (visiting.contains(name)) return; // cycle — skip
+        visiting.add(name);
+        for (String dep : deps.getOrDefault(name, Set.of())) {
+            visit(dep, deps, visited, visiting, result);
+        }
+        visiting.remove(name);
+        visited.add(name);
+        result.add(name);
     }
 
     public Sampler getSampler() {

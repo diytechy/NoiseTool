@@ -35,7 +35,7 @@ repositories {
     }
 }
 
-val terraGitHash = "a69404ee4"
+val terraGitHash = "ab245b090"
 
 val terraAddon: Configuration by configurations.creating
 val bootstrapTerraAddon: Configuration by configurations.creating
