@@ -153,7 +153,7 @@ public class NoisePanel extends JPanel {
         protected RenderResult doInBackground() throws Exception {
             // Step 1: Compile elevation YAML config -> Sampler (off EDT)
             consoleLog("Compiling elevation config...");
-            DummyPack pack = new DummyPack(platform, new HighAliasYamlConfiguration(mergeConfigs(commonYamlText, elevationYamlText), "Noise Config"), useLetExpressions);
+            DummyPack pack = new DummyPack(platform, mergeConfigs(commonYamlText, elevationYamlText, "Noise Config"), useLetExpressions);
             Sampler sampler = pack.getSampler();
             if (cancelled) return null;
 
@@ -162,7 +162,7 @@ public class NoisePanel extends JPanel {
             if (!colorYamlText.isEmpty()) {
                 try {
                     consoleLog("Compiling color config...");
-                    DummyPack colorPack = new DummyPack(platform, new HighAliasYamlConfiguration(mergeConfigs(commonYamlText, colorYamlText), "Color Config"), useLetExpressions);
+                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonYamlText, colorYamlText, "Color Config"), useLetExpressions);
                     colorSampler = colorPack.getSampler();
                     consoleLog("Color sampler compiled successfully.");
                 } catch (Exception e) {
@@ -497,8 +497,26 @@ public class NoisePanel extends JPanel {
         }
     }
 
+    /**
+     * Combines Common and Editor YAML into a single Configuration.
+     * First tries text prepending (preserves YAML anchors/aliases across tabs).
+     * Falls back to YAML-aware map merging if text prepend fails (e.g. duplicate keys),
+     * which unions map-valued keys like samplers/functions/variables.
+     */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> mergeConfigs(String commonYaml, String editorYaml) {
+    private static HighAliasYamlConfiguration mergeConfigs(String commonYaml, String editorYaml, String configName) {
+        String combined = (commonYaml != null && !commonYaml.trim().isEmpty())
+            ? commonYaml + "\n" + editorYaml
+            : editorYaml;
+
+        // Try text prepend first — preserves cross-tab anchors/aliases
+        try {
+            return new HighAliasYamlConfiguration(combined, configName);
+        } catch (Exception ignored) {
+            // Fall through to map merge (handles duplicate keys, etc.)
+        }
+
+        // Map-merge fallback: parse separately, union map-valued keys
         Yaml yaml = createHighAliasYaml();
 
         Map<String, Object> commonMap = (commonYaml != null && !commonYaml.trim().isEmpty())
@@ -511,27 +529,23 @@ public class NoisePanel extends JPanel {
         if (commonMap == null) commonMap = new LinkedHashMap<>();
         if (editorMap == null) editorMap = new LinkedHashMap<>();
 
-        // Start with Common entries
         Map<String, Object> merged = new LinkedHashMap<>(commonMap);
 
-        // Merge Editor entries on top
         for (Map.Entry<String, Object> entry : editorMap.entrySet()) {
             String key = entry.getKey();
             Object editorVal = entry.getValue();
             Object commonVal = merged.get(key);
 
-            // If both are maps, merge them (Editor wins on conflicts)
             if (commonVal instanceof Map && editorVal instanceof Map) {
                 Map<String, Object> mergedSub = new LinkedHashMap<>((Map<String, Object>) commonVal);
                 mergedSub.putAll((Map<String, Object>) editorVal);
                 merged.put(key, mergedSub);
             } else {
-                // Non-map or only one has it: Editor wins
                 merged.put(key, editorVal);
             }
         }
 
-        return merged;
+        return new HighAliasYamlConfiguration(merged, configName);
     }
 
     private static Yaml createHighAliasYaml() {
@@ -612,14 +626,14 @@ public class NoisePanel extends JPanel {
         this.error.set(true);
         try {
             String commonText = this.commonTextArea.getText();
-            DummyPack pack = new DummyPack(platform, new HighAliasYamlConfiguration(mergeConfigs(commonText, this.elevationTextArea.getText()), "Noise Config"), this.advancedPanel.isUseLetExpressions());
+            DummyPack pack = new DummyPack(platform, mergeConfigs(commonText, this.elevationTextArea.getText(), "Noise Config"), this.advancedPanel.isUseLetExpressions());
             this.noiseSeeded = pack.getSampler();
 
             // Compile color sampler if defined
             String colorText = this.colorTextArea.getText().trim();
             if (!colorText.isEmpty()) {
                 try {
-                    DummyPack colorPack = new DummyPack(platform, new HighAliasYamlConfiguration(mergeConfigs(commonText, colorText), "Color Config"), this.advancedPanel.isUseLetExpressions());
+                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonText, colorText, "Color Config"), this.advancedPanel.isUseLetExpressions());
                     this.colorSamplerSeeded = colorPack.getSampler();
                 } catch (Exception e) {
                     consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());

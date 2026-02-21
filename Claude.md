@@ -145,7 +145,7 @@ I am loading the content of "C:\Projects\ORIGEN2\.artifacts\resolved_samplers.ym
 1. Design a sampler (text yaml definition) that I can copy into the "color" tab that outputs a double representing color transitions as outlined below.
 2. Design a text block I can copy into the "Color scale:" that will properly map the double from the color sampler to the individual rgb channels outlined below.
 
-Color breaks:
+Color breaks for different sampler definitions:
 r, g, b
 0.0, 0.0, 0.0 <- Ocean Depth
 0.5, 0.0, 1.0 <- Ocean Surface
@@ -175,3 +175,58 @@ b = 1.0
 r = 0.5
 g = 0
 Push everything down to 0,0,0 as elevation decreases.
+
+############################################################
+
+## Changes: Multithreaded Rendering (Option 1) — Feb 2026
+
+**File:** NoisePanel.java
+
+All pixel sampling loops parallelized using `IntStream.range().parallel()`, splitting
+work by x-column across the ForkJoinPool common pool.
+
+**Loops parallelized (8 total):**
+- `RenderWorker.doInBackground()`: elevation sampling, color sampling, coloring/bucketing,
+  3D heightmap, voxel sampling
+- `getImage()`: elevation sampling, color sampling, coloring/bucketing
+- `getNoiseVals()`, `getNoiseVals3d()`, `getColorNoiseVals()`
+
+**Thread safety:**
+- Each x-column writes to its own `noiseVals[x][z]` slot — no write conflicts
+- `BufferedImage.setRGB()` is safe for non-overlapping pixel coordinates
+- Histogram `buckets[]` uses thread-local arrays merged with `synchronized` block
+- Cancellation uses `AtomicBoolean` checked at the start of each column
+- Terra's `Sampler.getSample()` is thread-safe (pure function, CACHE uses ThreadLocal)
+
+**Expected speedup:** ~4-6x on multi-core machines for the sampling portion.
+
+############################################################
+
+## Changes: Named Samplers via Common Tab (Option 3) — Feb 2026
+
+**Files:** HighAliasYamlConfiguration.java, NoisePanel.java
+
+Enables users to define named samplers in the Common tab that are available to
+EXPRESSION samplers in the Elevation and Color tabs.
+
+**How it works:**
+- `HighAliasYamlConfiguration` gained a `Map<String, Object>` constructor for
+  pre-parsed YAML maps.
+- `NoisePanel.prependCommon()` (text concatenation) replaced with `mergeConfigs()`
+  which uses a hybrid approach:
+  1. **Text prepend first** — preserves YAML anchors/aliases across Common and
+     Editor tabs (backwards compatible with existing usage).
+  2. **Map-merge fallback** — if text prepend fails (e.g. duplicate YAML keys like
+     both tabs having `samplers:`), parses each tab separately and unions map-valued
+     keys (`samplers:`, `functions:`, `variables:`). Editor entries win on conflict.
+
+**Usage for named samplers:**
+Put a `samplers:` section in Common with named sampler definitions. Reference them
+by name in EXPRESSION samplers in Elevation/Color tabs — they become callable
+functions (e.g., `myNamedSampler(x, z)`). This works because Terra's NoiseAddon
+loads the `samplers:` key from the Configuration during `ConfigPackPreLoadEvent`
+and injects them as pack-level samplers into `ExpressionFunctionTemplate`.
+
+**Note:** When using this mode (both tabs have `samplers:`), cross-tab YAML
+anchors/aliases will NOT work since each tab is parsed as a separate YAML document.
+Use named sampler references instead of anchors/aliases in that case.
