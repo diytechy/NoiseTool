@@ -15,6 +15,8 @@ import java.awt.event.MouseListener;
 import java.awt.event.MouseMotionListener;
 import java.awt.image.BufferedImage;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.IntStream;
 
 public class NoisePanel extends JPanel {
     private final RSyntaxTextArea elevationTextArea;
@@ -173,24 +175,28 @@ public class NoisePanel extends JPanel {
             BufferedImage img = new BufferedImage(sizeX, sizeZ, BufferedImage.TYPE_INT_ARGB);
             double[][] noiseVals = new double[sizeX][sizeZ];
 
-            for (int x = 0; x < sizeX; x++) {
-                if (cancelled) return null;
+            AtomicBoolean cancelFlag = new AtomicBoolean(false);
+
+            IntStream.range(0, sizeX).parallel().forEach(x -> {
+                if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
                 for (int z = 0; z < sizeZ; z++) {
-                    double n = sampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
-                    noiseVals[x][z] = n;
+                    noiseVals[x][z] = sampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
                 }
-            }
+            });
 
             // Sample color noise if color sampler exists
             double[][] colorNoiseVals = null;
-            if (colorSampler != null) {
+            final Sampler fColorSampler = colorSampler;
+            if (fColorSampler != null) {
                 colorNoiseVals = new double[sizeX][sizeZ];
-                for (int x = 0; x < sizeX; x++) {
-                    if (cancelled) return null;
+                final double[][] colorVals = colorNoiseVals;
+                cancelFlag.set(false);
+                IntStream.range(0, sizeX).parallel().forEach(x -> {
+                    if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
                     for (int z = 0; z < sizeZ; z++) {
-                        colorNoiseVals[x][z] = colorSampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+                        colorVals[x][z] = fColorSampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
                     }
-                }
+                });
             }
 
             long imgEndTime = System.nanoTime();
@@ -226,14 +232,20 @@ public class NoisePanel extends JPanel {
 
             // Apply colors using color source, statistics use elevation
             int[] buckets = new int[sizeX];
-            for (int x = 0; x < noiseVals.length; x++) {
-                if (cancelled) return null;
+            final double fMin = min, fMax = max;
+            final double fColorMin = colorMin, fColorMax = colorMax;
+            final double[][] fColorSource = colorSource;
+            // setRGB is safe for non-overlapping pixels; buckets aggregated per-column then merged
+            IntStream.range(0, noiseVals.length).parallel().forEach(x -> {
+                int[] localBuckets = new int[sizeX];
                 for (int z = 0; z < noiseVals[x].length; z++) {
-                    img.setRGB(x, z, colorScale.valueToIRgb(colorSource[x][z], colorMin, colorMax));
-                    buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] =
-                            buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] + 1;
+                    img.setRGB(x, z, colorScale.valueToIRgb(fColorSource[x][z], fColorMin, fColorMax));
+                    localBuckets[normal(noiseVals[x][z], (sizeX - 1), fMin, fMax)]++;
                 }
-            }
+                synchronized (buckets) {
+                    for (int i = 0; i < sizeX; i++) buckets[i] += localBuckets[i];
+                }
+            });
 
             // Chunk borders
             if (showChunks) {
@@ -256,12 +268,13 @@ public class NoisePanel extends JPanel {
 
             // Step 3: Generate noise vals for 3D heightmap
             double[][] heightmapVals = new double[sizeX][sizeZ];
-            for (int x = 0; x < sizeX; x++) {
-                if (cancelled) return null;
+            cancelFlag.set(false);
+            IntStream.range(0, sizeX).parallel().forEach(x -> {
+                if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
                 for (int z = 0; z < sizeZ; z++) {
                     heightmapVals[x][z] = sampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
                 }
-            }
+            });
 
             if (cancelled) return null;
 
@@ -269,15 +282,16 @@ public class NoisePanel extends JPanel {
             boolean[][][] voxelVals = null;
             if (voxelRes > 0) {
                 voxelVals = new boolean[voxelRes][voxelTopY - voxelBottomY][voxelRes];
-                for (int x = 0; x < voxelVals.length; x++) {
-                    if (cancelled) return null;
-                    for (int y = 0; y < voxelVals[x].length; y++) {
-                        for (int z = 0; z < voxelVals[x][y].length; z++) {
-                            double n = sampler.getSample(seed, x * multiplier + originX, y + voxelBottomY, z * multiplier + originZ);
-                            voxelVals[x][y][z] = n > 0;
+                final boolean[][][] fVoxelVals = voxelVals;
+                cancelFlag.set(false);
+                IntStream.range(0, voxelRes).parallel().forEach(x -> {
+                    if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
+                    for (int y = 0; y < fVoxelVals[x].length; y++) {
+                        for (int z = 0; z < fVoxelVals[x][y].length; z++) {
+                            fVoxelVals[x][y][z] = sampler.getSample(seed, x * multiplier + originX, y + voxelBottomY, z * multiplier + originZ) > 0;
                         }
                     }
-                }
+                });
             }
 
             return new RenderResult(sampler, colorSampler, img, heightmapVals, colorNoiseVals, voxelVals,
@@ -650,12 +664,11 @@ public class NoisePanel extends JPanel {
         int multiplier = this.settingsPanel.getPerspectiveMultiplier();
 
         double[][] noiseVals = new double[sizeX][sizeZ];
-        for (int x = 0; x < noiseVals.length; x++) {
-            for (int z = 0; z < (noiseVals[x]).length; z++) {
-                double n = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
-                noiseVals[x][z] = n;
+        IntStream.range(0, sizeX).parallel().forEach(x -> {
+            for (int z = 0; z < sizeZ; z++) {
+                noiseVals[x][z] = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
             }
-        }
+        });
         return noiseVals;
     }
 
@@ -669,14 +682,13 @@ public class NoisePanel extends JPanel {
         int sampleYMax = this.advancedPanel.getVoxelTopY();
 
         boolean[][][] noiseVals = new boolean[sampleRes][sampleYMax - sampleYMin][sampleRes];
-        for (int x = 0; x < noiseVals.length; x++) {
+        IntStream.range(0, sampleRes).parallel().forEach(x -> {
             for (int y = 0; y < noiseVals[x].length; y++) {
-                for(int z = 0; z < (noiseVals[x][y]).length; z++) {
-                    double n = noiseSeeded.getSample(seed, x * multiplier + originX, y + sampleYMin, z * multiplier + originZ);
-                    noiseVals[x][y][z] = n > 0;
+                for (int z = 0; z < noiseVals[x][y].length; z++) {
+                    noiseVals[x][y][z] = noiseSeeded.getSample(seed, x * multiplier + originX, y + sampleYMin, z * multiplier + originZ) > 0;
                 }
             }
-        }
+        });
         return noiseVals;
     }
 
@@ -688,11 +700,11 @@ public class NoisePanel extends JPanel {
         int multiplier = this.settingsPanel.getPerspectiveMultiplier();
 
         double[][] colorVals = new double[sizeX][sizeZ];
-        for (int x = 0; x < colorVals.length; x++) {
-            for (int z = 0; z < colorVals[x].length; z++) {
+        IntStream.range(0, sizeX).parallel().forEach(x -> {
+            for (int z = 0; z < sizeZ; z++) {
                 colorVals[x][z] = colorSamplerSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
             }
-        }
+        });
         return colorVals;
     }
 
@@ -708,12 +720,11 @@ public class NoisePanel extends JPanel {
         double[][] noiseVals = new double[sizeX][sizeY];
 
         long startTime = System.nanoTime();
-        for (int x = 0; x < noiseVals.length; x++) {
-            for (int z = 0; z < (noiseVals[x]).length; z++) {
-                double n = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
-                noiseVals[x][z] = n;
+        IntStream.range(0, sizeX).parallel().forEach(x -> {
+            for (int z = 0; z < sizeY; z++) {
+                noiseVals[x][z] = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
             }
-        }
+        });
         long endTime = System.nanoTime();
         double timeMs = (endTime - startTime) / 1000000.0D;
 
@@ -732,11 +743,12 @@ public class NoisePanel extends JPanel {
 
         if (colorSamplerSeeded != null) {
             colorSource = new double[sizeX][sizeY];
-            for (int x = 0; x < sizeX; x++) {
+            final double[][] fColorSource = colorSource;
+            IntStream.range(0, sizeX).parallel().forEach(x -> {
                 for (int z = 0; z < sizeY; z++) {
-                    colorSource[x][z] = colorSamplerSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+                    fColorSource[x][z] = colorSamplerSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
                 }
-            }
+            });
             colorMin = Double.MAX_VALUE;
             colorMax = Double.MIN_VALUE;
             for (double[] row : colorSource) {
@@ -752,12 +764,19 @@ public class NoisePanel extends JPanel {
 
         int[] buckets = new int[sizeX];
         ColorScale colorScale = this.settingsPanel.getColorScale();
-        for (int x = 0; x < noiseVals.length; x++) {
-            for (int z = 0; z < (noiseVals[x]).length; z++) {
-                image.setRGB(x, z, colorScale.valueToIRgb(colorSource[x][z], colorMin, colorMax));
-                buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] = buckets[normal(noiseVals[x][z], (sizeX - 1), min, max)] + 1;
+        final double fMin = min, fMax = max;
+        final double fColorMin = colorMin, fColorMax = colorMax;
+        final double[][] fColorSrc = colorSource;
+        IntStream.range(0, noiseVals.length).parallel().forEach(x -> {
+            int[] localBuckets = new int[sizeX];
+            for (int z = 0; z < noiseVals[x].length; z++) {
+                image.setRGB(x, z, colorScale.valueToIRgb(fColorSrc[x][z], fColorMin, fColorMax));
+                localBuckets[normal(noiseVals[x][z], (sizeX - 1), fMin, fMax)]++;
             }
-        }
+            synchronized (buckets) {
+                for (int i = 0; i < sizeX; i++) buckets[i] += localBuckets[i];
+            }
+        });
 
         if (this.chunk.get()) {
             for (int x = 0; x < Math.floorDiv(image.getWidth(), 16); x++) {
