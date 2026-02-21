@@ -551,6 +551,7 @@ public class NoisePanel extends JPanel {
     private static Yaml createHighAliasYaml() {
         LoaderOptions options = new LoaderOptions();
         options.setMaxAliasesForCollections(500);
+        options.setCodePointLimit(16 * 1024 * 1024); // 16 MB (default is 3 MB)
         return new Yaml(options);
     }
 

@@ -30,6 +30,7 @@ public class HighAliasYamlConfiguration implements Configuration {
     private static Yaml createYaml() {
         LoaderOptions options = new LoaderOptions();
         options.setMaxAliasesForCollections(MAX_ALIASES);
+        options.setCodePointLimit(16 * 1024 * 1024); // 16 MB (default is 3 MB)
         return new Yaml(options);
     }
 
