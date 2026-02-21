@@ -14,8 +14,12 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.awt.event.MouseMotionListener;
 import java.awt.image.BufferedImage;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.Map;
+import java.util.Queue;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.IntStream;
@@ -153,7 +157,7 @@ public class NoisePanel extends JPanel {
         protected RenderResult doInBackground() throws Exception {
             // Step 1: Compile elevation YAML config -> Sampler (off EDT)
             consoleLog("Compiling elevation config...");
-            DummyPack pack = new DummyPack(platform, mergeConfigs(commonYamlText, elevationYamlText, "Noise Config"), useLetExpressions);
+            DummyPack pack = new DummyPack(platform, mergeConfigs(commonYamlText, elevationYamlText, "Noise Config", NoisePanel.this::consoleLog), useLetExpressions);
             Sampler sampler = pack.getSampler();
             if (cancelled) return null;
 
@@ -162,7 +166,7 @@ public class NoisePanel extends JPanel {
             if (!colorYamlText.isEmpty()) {
                 try {
                     consoleLog("Compiling color config...");
-                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonYamlText, colorYamlText, "Color Config"), useLetExpressions);
+                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonYamlText, colorYamlText, "Color Config", NoisePanel.this::consoleLog), useLetExpressions);
                     colorSampler = colorPack.getSampler();
                     consoleLog("Color sampler compiled successfully.");
                 } catch (Exception e) {
@@ -498,51 +502,206 @@ public class NoisePanel extends JPanel {
     }
 
     /**
+     * Scan text for references to known names using function-call syntax: name( or name (
+     * False positives are harmless (just loads an extra sampler/function).
+     */
+    private static Set<String> findReferencedNames(String text, Set<String> knownNames) {
+        Set<String> found = new HashSet<>();
+        for (String name : knownNames) {
+            if (text.contains(name + "(") || text.contains(name + " (")) {
+                found.add(name);
+            }
+        }
+        return found;
+    }
+
+    /**
+     * Starting from seed sampler names, transitively discover all samplers they depend on.
+     * Walks each sampler's config (serialized to string) looking for references to other
+     * known sampler names.
+     */
+    @SuppressWarnings("unchecked")
+    private static Set<String> resolveTransitiveDeps(Set<String> seeds, Map<String, Object> allSamplers) {
+        Set<String> resolved = new HashSet<>(seeds);
+        Queue<String> queue = new LinkedList<>(seeds);
+        Set<String> knownNames = allSamplers.keySet();
+        Yaml yaml = createHighAliasYaml();
+        while (!queue.isEmpty()) {
+            String name = queue.poll();
+            Object config = allSamplers.get(name);
+            if (config == null) continue;
+            String configText = yaml.dump(config);
+            for (String candidate : knownNames) {
+                if (!resolved.contains(candidate) &&
+                    (configText.contains(candidate + "(") || configText.contains(candidate + " ("))) {
+                    resolved.add(candidate);
+                    queue.add(candidate);
+                }
+            }
+        }
+        return resolved;
+    }
+
+    /**
+     * Filter a samplers/functions map to only include entries whose names are in keepNames.
+     */
+    private static Map<String, Object> filterMapEntries(Map<String, Object> map, Set<String> keepNames) {
+        Map<String, Object> filtered = new LinkedHashMap<>();
+        for (String name : keepNames) {
+            if (map.containsKey(name)) {
+                filtered.put(name, map.get(name));
+            }
+        }
+        return filtered;
+    }
+
+    /**
+     * Filter the merged config map to only include samplers and functions that are
+     * transitively referenced by the editor YAML. Logs filtering stats to the console.
+     */
+    @SuppressWarnings("unchecked")
+    private static void filterUnusedEntries(Map<String, Object> merged, String editorYaml,
+                                            java.util.function.Consumer<String> logger) {
+        Object samplersObj = merged.get("samplers");
+        if (!(samplersObj instanceof Map)) return;
+        Map<String, Object> allSamplers = (Map<String, Object>) samplersObj;
+        if (allSamplers.isEmpty()) return;
+
+        // Find sampler names directly referenced in editor text
+        Set<String> directRefs = findReferencedNames(editorYaml, allSamplers.keySet());
+
+        // Also keep any sampler names that appear as keys in the editor's own samplers section
+        // (these are local expression samplers the editor defines)
+        try {
+            Yaml yaml = createHighAliasYaml();
+            Map<String, Object> editorMap = (Map<String, Object>) yaml.load(editorYaml);
+            if (editorMap != null) {
+                Object editorSamplers = editorMap.get("samplers");
+                if (editorSamplers instanceof Map) {
+                    directRefs.addAll(((Map<String, Object>) editorSamplers).keySet());
+                }
+            }
+        } catch (Exception ignored) {
+            // Editor YAML might not parse standalone — that's fine
+        }
+
+        // Transitively resolve dependencies
+        Set<String> allRefs = resolveTransitiveDeps(directRefs, allSamplers);
+
+        int totalSamplers = allSamplers.size();
+        int keptSamplers = allRefs.size();
+        if (keptSamplers < totalSamplers) {
+            merged.put("samplers", filterMapEntries(allSamplers, allRefs));
+            if (logger != null) {
+                logger.accept("Filtered samplers: " + keptSamplers + " of " + totalSamplers
+                    + " referenced (" + (totalSamplers - keptSamplers) + " skipped)");
+            }
+        }
+
+        // Also filter functions
+        Object functionsObj = merged.get("functions");
+        if (functionsObj instanceof Map) {
+            Map<String, Object> allFunctions = (Map<String, Object>) functionsObj;
+            if (!allFunctions.isEmpty()) {
+                // Scan editor text + kept sampler configs for function references
+                StringBuilder allText = new StringBuilder(editorYaml);
+                Yaml yaml = createHighAliasYaml();
+                for (String name : allRefs) {
+                    Object config = allSamplers.get(name);
+                    if (config != null) {
+                        allText.append('\n').append(yaml.dump(config));
+                    }
+                }
+                Set<String> funcRefs = findReferencedNames(allText.toString(), allFunctions.keySet());
+
+                // Functions can reference other functions — resolve transitively
+                Set<String> allFuncRefs = new HashSet<>(funcRefs);
+                Queue<String> funcQueue = new LinkedList<>(funcRefs);
+                while (!funcQueue.isEmpty()) {
+                    String fname = funcQueue.poll();
+                    Object fconfig = allFunctions.get(fname);
+                    if (fconfig == null) continue;
+                    String ftext = yaml.dump(fconfig);
+                    for (String candidate : allFunctions.keySet()) {
+                        if (!allFuncRefs.contains(candidate) &&
+                            (ftext.contains(candidate + "(") || ftext.contains(candidate + " ("))) {
+                            allFuncRefs.add(candidate);
+                            funcQueue.add(candidate);
+                        }
+                    }
+                }
+
+                int totalFuncs = allFunctions.size();
+                int keptFuncs = allFuncRefs.size();
+                if (keptFuncs < totalFuncs) {
+                    merged.put("functions", filterMapEntries(allFunctions, allFuncRefs));
+                    if (logger != null) {
+                        logger.accept("Filtered functions: " + keptFuncs + " of " + totalFuncs
+                            + " referenced (" + (totalFuncs - keptFuncs) + " skipped)");
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Combines Common and Editor YAML into a single Configuration.
      * First tries text prepending (preserves YAML anchors/aliases across tabs).
      * Falls back to YAML-aware map merging if text prepend fails (e.g. duplicate keys),
      * which unions map-valued keys like samplers/functions/variables.
+     * In both paths, filters out unused samplers/functions for faster compilation.
      */
     @SuppressWarnings("unchecked")
-    private static HighAliasYamlConfiguration mergeConfigs(String commonYaml, String editorYaml, String configName) {
-        String combined = (commonYaml != null && !commonYaml.trim().isEmpty())
-            ? commonYaml + "\n" + editorYaml
-            : editorYaml;
+    private static HighAliasYamlConfiguration mergeConfigs(String commonYaml, String editorYaml,
+                                                            String configName, java.util.function.Consumer<String> logger) {
+        boolean hasCommon = commonYaml != null && !commonYaml.trim().isEmpty();
+
+        String combined = hasCommon ? commonYaml + "\n" + editorYaml : editorYaml;
+
+        Map<String, Object> merged = null;
 
         // Try text prepend first — preserves cross-tab anchors/aliases
         try {
-            return new HighAliasYamlConfiguration(combined, configName);
+            Yaml yaml = createHighAliasYaml();
+            merged = (Map<String, Object>) yaml.load(combined);
         } catch (Exception ignored) {
             // Fall through to map merge (handles duplicate keys, etc.)
         }
 
         // Map-merge fallback: parse separately, union map-valued keys
-        Yaml yaml = createHighAliasYaml();
+        if (merged == null) {
+            Yaml yaml = createHighAliasYaml();
 
-        Map<String, Object> commonMap = (commonYaml != null && !commonYaml.trim().isEmpty())
-            ? (Map<String, Object>) yaml.load(commonYaml)
-            : new LinkedHashMap<>();
-        Map<String, Object> editorMap = (editorYaml != null && !editorYaml.trim().isEmpty())
-            ? (Map<String, Object>) yaml.load(editorYaml)
-            : new LinkedHashMap<>();
+            Map<String, Object> commonMap = hasCommon
+                ? (Map<String, Object>) yaml.load(commonYaml)
+                : new LinkedHashMap<>();
+            Map<String, Object> editorMap = (editorYaml != null && !editorYaml.trim().isEmpty())
+                ? (Map<String, Object>) yaml.load(editorYaml)
+                : new LinkedHashMap<>();
 
-        if (commonMap == null) commonMap = new LinkedHashMap<>();
-        if (editorMap == null) editorMap = new LinkedHashMap<>();
+            if (commonMap == null) commonMap = new LinkedHashMap<>();
+            if (editorMap == null) editorMap = new LinkedHashMap<>();
 
-        Map<String, Object> merged = new LinkedHashMap<>(commonMap);
+            merged = new LinkedHashMap<>(commonMap);
 
-        for (Map.Entry<String, Object> entry : editorMap.entrySet()) {
-            String key = entry.getKey();
-            Object editorVal = entry.getValue();
-            Object commonVal = merged.get(key);
+            for (Map.Entry<String, Object> entry : editorMap.entrySet()) {
+                String key = entry.getKey();
+                Object editorVal = entry.getValue();
+                Object commonVal = merged.get(key);
 
-            if (commonVal instanceof Map && editorVal instanceof Map) {
-                Map<String, Object> mergedSub = new LinkedHashMap<>((Map<String, Object>) commonVal);
-                mergedSub.putAll((Map<String, Object>) editorVal);
-                merged.put(key, mergedSub);
-            } else {
-                merged.put(key, editorVal);
+                if (commonVal instanceof Map && editorVal instanceof Map) {
+                    Map<String, Object> mergedSub = new LinkedHashMap<>((Map<String, Object>) commonVal);
+                    mergedSub.putAll((Map<String, Object>) editorVal);
+                    merged.put(key, mergedSub);
+                } else {
+                    merged.put(key, editorVal);
+                }
             }
+        }
+
+        // Filter unused samplers/functions for faster compilation
+        if (hasCommon) {
+            filterUnusedEntries(merged, editorYaml, logger);
         }
 
         return new HighAliasYamlConfiguration(merged, configName);
@@ -627,14 +786,14 @@ public class NoisePanel extends JPanel {
         this.error.set(true);
         try {
             String commonText = this.commonTextArea.getText();
-            DummyPack pack = new DummyPack(platform, mergeConfigs(commonText, this.elevationTextArea.getText(), "Noise Config"), this.advancedPanel.isUseLetExpressions());
+            DummyPack pack = new DummyPack(platform, mergeConfigs(commonText, this.elevationTextArea.getText(), "Noise Config", this::consoleLog), this.advancedPanel.isUseLetExpressions());
             this.noiseSeeded = pack.getSampler();
 
             // Compile color sampler if defined
             String colorText = this.colorTextArea.getText().trim();
             if (!colorText.isEmpty()) {
                 try {
-                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonText, colorText, "Color Config"), this.advancedPanel.isUseLetExpressions());
+                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonText, colorText, "Color Config", this::consoleLog), this.advancedPanel.isUseLetExpressions());
                     this.colorSamplerSeeded = colorPack.getSampler();
                 } catch (Exception e) {
                     consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());
