@@ -22,6 +22,11 @@ public class HighAliasYamlConfiguration implements Configuration {
         this.config = createYaml().load(yaml);
     }
 
+    public HighAliasYamlConfiguration(Map<String, Object> config, String name) {
+        this.name = name;
+        this.config = config;
+    }
+
     private static Yaml createYaml() {
         LoaderOptions options = new LoaderOptions();
         options.setMaxAliasesForCollections(MAX_ALIASES);
