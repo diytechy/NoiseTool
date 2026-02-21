@@ -7,6 +7,7 @@ group = "com.dfsek"
 version = "1.2.2"
 
 repositories {
+    mavenLocal()  // Check local ~/.m2 first (use publish_to_maven_local.bat in Terra to populate)
     mavenCentral()
     maven {
         name = "Repsy-Terra"
@@ -34,10 +35,23 @@ repositories {
     }
 }
 
-val terraGitHash = "ec788bf"
+val terraGitHash = "a69404ee4"
 
 val terraAddon: Configuration by configurations.creating
 val bootstrapTerraAddon: Configuration by configurations.creating
+
+gradle.taskGraph.whenReady {
+    val terraModule = configurations.compileClasspath.get().resolvedConfiguration
+        .resolvedArtifacts.find { it.moduleVersion.id.group == "com.dfsek.terra" && it.moduleVersion.id.name == "base" }
+    if(terraModule != null) {
+        val repo = when {
+            terraModule.file.path.replace("\\", "/").contains("/.m2/repository/") -> "mavenLocal"
+            else -> "remote (Repsy or other)"
+        }
+        logger.lifecycle("Terra base resolved: ${terraModule.moduleVersion.id} from $repo")
+        logger.lifecycle("  -> ${terraModule.file}")
+    }
+}
 
 dependencies {
     testImplementation("org.junit.jupiter", "junit-jupiter", "5.13.0")
