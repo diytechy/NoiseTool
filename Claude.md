@@ -140,41 +140,57 @@ Is there a way this limit can be increased for this project to overcome this err
 
 ############################################################
 
-I am loading the content of "C:\Projects\ORIGEN2\.artifacts\resolved_samplers.yml" to the "Common" editor tab, and want you to design an expression sampler and color definition.  There are two exports expected for this activity:
+Plan: Design a color sampler for the NoiseTool given known available named samplers:
+
+I am loading the content of "C:\Projects\ORIGEN2\.artifacts\resolved_samplers.yml" to the "Common" editor tab, and want you to design a sampler for the color definition.  There are two exports expected for this activity:
 
 1. Design a sampler (text yaml definition) that I can copy into the "color" tab that outputs a double representing color transitions as outlined below.
 2. Design a text block I can copy into the "Color scale:" that will properly map the double from the color sampler to the individual rgb channels outlined below.
 
-Color breaks for different sampler definitions:
+The color scale must follow the format:
+SamplerValueA, RedLevel, GreenLevel, BlueLevel, and each entry must be monotonically increasing in SamplerValue.  An example of a current sampler that shows blue below sea level, down to black at the deepest end, and green at the coast, up to white at mountain peaks:
+-1.0, 0.0, 0.0, 0.0
+-0.001, 0.0, 0.0, 1.0
+0.0, 0.0, 1.0, 0.0
+1.0, 1.0, 1.0, 1.0
+
+Some samplers would be combined / multiplied with other samplers to give scaling / shading affects, those include:
+compositeElevation(x,z) - Indicates elevation scaling from 0 to 1 above sea, -1 to 0 below sea.
+precipitation(x,z) - Indicates precipitation climate scaling from 0 to 1
+temperature(x,z) - Indicates temperature climate scaling from 0 to 1
+
+Color breaks for different sampler definitions
+
+For oceans:
 r, g, b
-0.0, 0.0, 0.0 <- Ocean Depth
-0.5, 0.0, 1.0 <- Ocean Surface
+0.0, 0.0, 0.0 <- Ocean Depth (compositeElevation(x,z) == -1)
+0.5, 0.0, 1.0 <- Ocean Surface (compositeElevation(x,z) == 0)
 
-
-For normal land:
-g = 1.0
-b = temperature range.
-r = precipitation range.
-
-For mesa range:
-r = 1.0
-g = 0.5
-b = temperature range?
-Note: Mesas should always be dry... maybe?  Or not necessary?
-
-For mountain ranges:
-Push everything up to 1,1,1 as elevation increases.
 
 For rivers:
 b = 1.0
 g = elevation range.
 r = 0.0
 
-For oceans:
-b = 1.0
-r = 0.5
+For mesa range (mesaMask(x,z)>0)
+r = 1.0
+g = 0.5
+b = temperature range?
+
+For mountain ranges (AppliedMountainHeightA(x,z)>0 or AppliedMountainHeightB(x,z)>0):
+r,g,b all match, going from 0.5 at 0 elevation to 1.0 at 1 elevation.
+
+For plains (plainsMaskApplied)
 g = 0
-Push everything down to 0,0,0 as elevation decreases.
+b = 0.65
+r = 0.65
+r/b increase with elevation.
+
+For all other (normal land):
+g = 1.0
+b = temperature range.
+r = precipitation range.
+
 
 ############################################################
 
