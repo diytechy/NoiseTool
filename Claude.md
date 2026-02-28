@@ -246,3 +246,13 @@ and injects them as pack-level samplers into `ExpressionFunctionTemplate`.
 **Note:** When using this mode (both tabs have `samplers:`), cross-tab YAML
 anchors/aliases will NOT work since each tab is parsed as a separate YAML document.
 Use named sampler references instead of anchors/aliases in that case.
+
+
+################ Previous prompt: 02/28:
+
+Make a plan to update the NoiseTool with some additional functionality:
+
+1. Show a progress bar indicating progression of compiling / rendering either at the bottom of the window or in the render screen.
+2. When rendering, if not performed already, render "blocks" or "cells" of pixels within a 256x256 world coordinate (omitting any that are outside the view window, specifically as it should improve processing for the Dendry noise sampler and the way it caches sampler points.
+3. Each time before combining / parsing YAML files for subsequent compilation of samplers, create an anchor at the top with the name PerspectiveMultiplier, Set it's value equal to the current "Perspective Multiplier" so it can be aliased by other samplers as this greatly affects rendering speed.
+4. Sometimes escape does not appear to work, escape ideally would interrupt all tasks (noise compilation / any active render streams).
