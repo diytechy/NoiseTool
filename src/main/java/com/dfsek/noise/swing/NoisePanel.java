@@ -20,8 +20,11 @@ import java.util.LinkedList;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
@@ -104,6 +107,8 @@ public class NoisePanel extends JPanel {
         }
     }
 
+    private static final int BLOCK_SIZE = 256; // world coordinate block size for cache-friendly rendering
+
     // SwingWorker that performs rendering on a background thread
     private class RenderWorker extends SwingWorker<RenderResult, Void> {
         private final long startTime;
@@ -150,165 +155,276 @@ public class NoisePanel extends JPanel {
 
         public void cancelRender() {
             this.cancelled = true;
-            cancel(false);
+            cancel(true); // interrupt the worker thread for faster cancellation
+        }
+
+        private void checkCancelled() throws InterruptedException {
+            if (cancelled || Thread.interrupted()) {
+                throw new InterruptedException("Render cancelled");
+            }
+        }
+
+        private void reportProgress(int percent, String phase) {
+            SwingUtilities.invokeLater(() -> statusBar.setProgress(percent, phase));
+        }
+
+        /**
+         * Build the list of (blockX, blockZ) pairs covering the view window,
+         * aligned to BLOCK_SIZE world-coordinate boundaries.
+         */
+        private List<int[]> computeBlocks(double oX, double oZ, int pixelsX, int pixelsZ, int mult) {
+            double worldMinX = oX;
+            double worldMaxX = oX + (double) pixelsX * mult;
+            double worldMinZ = oZ;
+            double worldMaxZ = oZ + (double) pixelsZ * mult;
+
+            int blockStartX = (int) Math.floor(worldMinX / BLOCK_SIZE);
+            int blockEndX = (int) Math.floor(worldMaxX / BLOCK_SIZE);
+            int blockStartZ = (int) Math.floor(worldMinZ / BLOCK_SIZE);
+            int blockEndZ = (int) Math.floor(worldMaxZ / BLOCK_SIZE);
+
+            List<int[]> blocks = new ArrayList<>();
+            for (int bx = blockStartX; bx <= blockEndX; bx++) {
+                for (int bz = blockStartZ; bz <= blockEndZ; bz++) {
+                    blocks.add(new int[]{bx, bz});
+                }
+            }
+            return blocks;
         }
 
         @Override
         protected RenderResult doInBackground() throws Exception {
-            // Step 1: Compile elevation YAML config -> Sampler (off EDT)
-            consoleLog("Compiling elevation config...");
-            DummyPack pack = new DummyPack(platform, mergeConfigs(commonYamlText, elevationYamlText, "Noise Config", NoisePanel.this::consoleLog), useLetExpressions);
-            Sampler sampler = pack.getSampler();
-            if (cancelled) return null;
+            try {
+                // Step 1: Compile elevation YAML config -> Sampler (off EDT)
+                reportProgress(-1, "Compiling elevation...");
+                consoleLog("Compiling elevation config...");
+                DummyPack pack = new DummyPack(platform, mergeConfigs(commonYamlText, elevationYamlText, "Noise Config", NoisePanel.this::consoleLog, multiplier), useLetExpressions);
+                Sampler sampler = pack.getSampler();
+                checkCancelled();
 
-            // Step 1b: Compile color sampler (if defined)
-            Sampler colorSampler = null;
-            if (!colorYamlText.isEmpty()) {
-                try {
-                    consoleLog("Compiling color config...");
-                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonYamlText, colorYamlText, "Color Config", NoisePanel.this::consoleLog), useLetExpressions);
-                    colorSampler = colorPack.getSampler();
-                    consoleLog("Color sampler compiled successfully.");
-                } catch (Exception e) {
-                    consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());
-                    colorSampler = null;
+                // Step 1b: Compile color sampler (if defined)
+                Sampler colorSampler = null;
+                if (!colorYamlText.isEmpty()) {
+                    try {
+                        reportProgress(-1, "Compiling color...");
+                        consoleLog("Compiling color config...");
+                        DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonYamlText, colorYamlText, "Color Config", NoisePanel.this::consoleLog, multiplier), useLetExpressions);
+                        colorSampler = colorPack.getSampler();
+                        consoleLog("Color sampler compiled successfully.");
+                    } catch (RuntimeException e) {
+                        if (e.getCause() instanceof InterruptedException) {
+                            throw new InterruptedException("Render cancelled");
+                        }
+                        consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());
+                        colorSampler = null;
+                    } catch (Exception e) {
+                        consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());
+                        colorSampler = null;
+                    }
                 }
-            }
-            if (cancelled) return null;
+                checkCancelled();
 
-            // Step 2: Generate 2D image (pixel loops with cancellation checks)
-            consoleLog("Rendering noise with seed " + seed);
-            long imgStartTime = System.nanoTime();
+                // Step 2: Generate 2D image using block-based sampling
+                reportProgress(10, "Sampling elevation...");
+                consoleLog("Rendering noise with seed " + seed);
+                long imgStartTime = System.nanoTime();
 
-            BufferedImage img = new BufferedImage(sizeX, sizeZ, BufferedImage.TYPE_INT_ARGB);
-            double[][] noiseVals = new double[sizeX][sizeZ];
+                BufferedImage img = new BufferedImage(sizeX, sizeZ, BufferedImage.TYPE_INT_ARGB);
+                double[][] noiseVals = new double[sizeX][sizeZ];
 
-            AtomicBoolean cancelFlag = new AtomicBoolean(false);
+                AtomicBoolean cancelFlag = new AtomicBoolean(false);
+                List<int[]> blocks = computeBlocks(originX, originZ, sizeX, sizeZ, multiplier);
+                int totalBlocks = blocks.size();
+                AtomicInteger completedBlocks = new AtomicInteger(0);
 
-            IntStream.range(0, sizeX).parallel().forEach(x -> {
-                if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
-                for (int z = 0; z < sizeZ; z++) {
-                    noiseVals[x][z] = sampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
-                }
-            });
-
-            // Sample color noise if color sampler exists
-            double[][] colorNoiseVals = null;
-            final Sampler fColorSampler = colorSampler;
-            if (fColorSampler != null) {
-                colorNoiseVals = new double[sizeX][sizeZ];
-                final double[][] colorVals = colorNoiseVals;
-                cancelFlag.set(false);
-                IntStream.range(0, sizeX).parallel().forEach(x -> {
+                // Elevation sampling — block-based parallel
+                blocks.parallelStream().forEach(block -> {
                     if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
-                    for (int z = 0; z < sizeZ; z++) {
-                        colorVals[x][z] = fColorSampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
-                    }
-                });
-            }
+                    int blockMinWX = block[0] * BLOCK_SIZE;
+                    int blockMaxWX = blockMinWX + BLOCK_SIZE;
+                    int blockMinWZ = block[1] * BLOCK_SIZE;
+                    int blockMaxWZ = blockMinWZ + BLOCK_SIZE;
 
-            long imgEndTime = System.nanoTime();
-            double sampleTimeMs = (imgEndTime - imgStartTime) / 1_000_000.0;
-
-            if (cancelled) return null;
-
-            // Calculate elevation min/max
-            double max = Double.MIN_VALUE;
-            double min = Double.MAX_VALUE;
-            for (double[] noiseVal : noiseVals) {
-                for (double v : noiseVal) {
-                    max = Math.max(v, max);
-                    min = Math.min(v, min);
-                }
-            }
-
-            // Determine color source and its min/max
-            double[][] colorSource = (colorNoiseVals != null) ? colorNoiseVals : noiseVals;
-            double colorMax = Double.MIN_VALUE;
-            double colorMin = Double.MAX_VALUE;
-            if (colorNoiseVals != null) {
-                for (double[] row : colorNoiseVals) {
-                    for (double v : row) {
-                        colorMax = Math.max(v, colorMax);
-                        colorMin = Math.min(v, colorMin);
-                    }
-                }
-            } else {
-                colorMax = max;
-                colorMin = min;
-            }
-
-            // Apply colors using color source, statistics use elevation
-            int[] buckets = new int[sizeX];
-            final double fMin = min, fMax = max;
-            final double fColorMin = colorMin, fColorMax = colorMax;
-            final double[][] fColorSource = colorSource;
-            // setRGB is safe for non-overlapping pixels; buckets aggregated per-column then merged
-            IntStream.range(0, noiseVals.length).parallel().forEach(x -> {
-                int[] localBuckets = new int[sizeX];
-                for (int z = 0; z < noiseVals[x].length; z++) {
-                    img.setRGB(x, z, colorScale.valueToIRgb(fColorSource[x][z], fColorMin, fColorMax));
-                    localBuckets[normal(noiseVals[x][z], (sizeX - 1), fMin, fMax)]++;
-                }
-                synchronized (buckets) {
-                    for (int i = 0; i < sizeX; i++) buckets[i] += localBuckets[i];
-                }
-            });
-
-            // Chunk borders
-            if (showChunks) {
-                for (int x = 0; x < Math.floorDiv(img.getWidth(), 16); x++) {
-                    for (int y = 0; y < img.getHeight(); y++) {
-                        img.setRGB(x * 16, y, buildRGBA(0));
-                    }
-                }
-                for (int y = 0; y < Math.floorDiv(img.getHeight(), 16); y++) {
-                    for (int x = 0; x < img.getWidth(); x++) {
-                        img.setRGB(x, y * 16, buildRGBA(0));
-                    }
-                }
-            }
-
-            String statsText = "min: " + min + "\nmax: " + max + "\nseed: " + seed + "\ntime: " + sampleTimeMs + "ms";
-            consoleLog("Rendered " + (sizeX * sizeZ) + " points in " + sampleTimeMs + "ms.");
-
-            if (cancelled) return null;
-
-            // Step 3: Generate noise vals for 3D heightmap
-            double[][] heightmapVals = new double[sizeX][sizeZ];
-            cancelFlag.set(false);
-            IntStream.range(0, sizeX).parallel().forEach(x -> {
-                if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
-                for (int z = 0; z < sizeZ; z++) {
-                    heightmapVals[x][z] = sampler.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
-                }
-            });
-
-            if (cancelled) return null;
-
-            // Step 4: Generate voxel data (if enabled)
-            boolean[][][] voxelVals = null;
-            if (voxelRes > 0) {
-                voxelVals = new boolean[voxelRes][voxelTopY - voxelBottomY][voxelRes];
-                final boolean[][][] fVoxelVals = voxelVals;
-                cancelFlag.set(false);
-                IntStream.range(0, voxelRes).parallel().forEach(x -> {
-                    if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
-                    for (int y = 0; y < fVoxelVals[x].length; y++) {
-                        for (int z = 0; z < fVoxelVals[x][y].length; z++) {
-                            fVoxelVals[x][y][z] = sampler.getSample(seed, x * multiplier + originX, y + voxelBottomY, z * multiplier + originZ) > 0;
+                    for (int wx = blockMinWX; wx < blockMaxWX; wx += multiplier) {
+                        int px = (int) Math.round((wx - originX) / multiplier);
+                        if (px < 0 || px >= sizeX) continue;
+                        for (int wz = blockMinWZ; wz < blockMaxWZ; wz += multiplier) {
+                            int pz = (int) Math.round((wz - originZ) / multiplier);
+                            if (pz < 0 || pz >= sizeZ) continue;
+                            noiseVals[px][pz] = sampler.getSample(seed, px * multiplier + originX, pz * multiplier + originZ);
                         }
                     }
+                    int done = completedBlocks.incrementAndGet();
+                    if (done % Math.max(1, totalBlocks / 20) == 0) {
+                        reportProgress(10 + (int)(done * 35.0 / totalBlocks), "Sampling elevation...");
+                    }
                 });
-            }
 
-            return new RenderResult(sampler, colorSampler, img, heightmapVals, colorNoiseVals, voxelVals,
-                    min, max, buckets, statsText, sampleTimeMs, seed, colorScale, yScale);
+                // Sample color noise if color sampler exists
+                double[][] colorNoiseVals = null;
+                final Sampler fColorSampler = colorSampler;
+                if (fColorSampler != null) {
+                    checkCancelled();
+                    reportProgress(45, "Sampling color...");
+                    colorNoiseVals = new double[sizeX][sizeZ];
+                    final double[][] colorVals = colorNoiseVals;
+                    cancelFlag.set(false);
+                    completedBlocks.set(0);
+                    blocks.parallelStream().forEach(block -> {
+                        if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
+                        int blockMinWX = block[0] * BLOCK_SIZE;
+                        int blockMaxWX = blockMinWX + BLOCK_SIZE;
+                        int blockMinWZ = block[1] * BLOCK_SIZE;
+                        int blockMaxWZ = blockMinWZ + BLOCK_SIZE;
+
+                        for (int wx = blockMinWX; wx < blockMaxWX; wx += multiplier) {
+                            int px = (int) Math.round((wx - originX) / multiplier);
+                            if (px < 0 || px >= sizeX) continue;
+                            for (int wz = blockMinWZ; wz < blockMaxWZ; wz += multiplier) {
+                                int pz = (int) Math.round((wz - originZ) / multiplier);
+                                if (pz < 0 || pz >= sizeZ) continue;
+                                colorVals[px][pz] = fColorSampler.getSample(seed, px * multiplier + originX, pz * multiplier + originZ);
+                            }
+                        }
+                        int done = completedBlocks.incrementAndGet();
+                        if (done % Math.max(1, totalBlocks / 20) == 0) {
+                            reportProgress(45 + (int)(done * 15.0 / totalBlocks), "Sampling color...");
+                        }
+                    });
+                }
+
+                long imgEndTime = System.nanoTime();
+                double sampleTimeMs = (imgEndTime - imgStartTime) / 1_000_000.0;
+
+                checkCancelled();
+
+                // Calculate elevation min/max
+                reportProgress(62, "Applying colors...");
+                double max = Double.MIN_VALUE;
+                double min = Double.MAX_VALUE;
+                for (double[] noiseVal : noiseVals) {
+                    for (double v : noiseVal) {
+                        max = Math.max(v, max);
+                        min = Math.min(v, min);
+                    }
+                }
+
+                // Determine color source and its min/max
+                double[][] colorSource = (colorNoiseVals != null) ? colorNoiseVals : noiseVals;
+                double colorMax = Double.MIN_VALUE;
+                double colorMin = Double.MAX_VALUE;
+                if (colorNoiseVals != null) {
+                    for (double[] row : colorNoiseVals) {
+                        for (double v : row) {
+                            colorMax = Math.max(v, colorMax);
+                            colorMin = Math.min(v, colorMin);
+                        }
+                    }
+                } else {
+                    colorMax = max;
+                    colorMin = min;
+                }
+
+                // Apply colors using color source, statistics use elevation
+                int[] buckets = new int[sizeX];
+                final double fMin = min, fMax = max;
+                final double fColorMin = colorMin, fColorMax = colorMax;
+                final double[][] fColorSource = colorSource;
+                IntStream.range(0, noiseVals.length).parallel().forEach(x -> {
+                    int[] localBuckets = new int[sizeX];
+                    for (int z = 0; z < noiseVals[x].length; z++) {
+                        img.setRGB(x, z, colorScale.valueToIRgb(fColorSource[x][z], fColorMin, fColorMax));
+                        localBuckets[normal(noiseVals[x][z], (sizeX - 1), fMin, fMax)]++;
+                    }
+                    synchronized (buckets) {
+                        for (int i = 0; i < sizeX; i++) buckets[i] += localBuckets[i];
+                    }
+                });
+
+                // Chunk borders
+                if (showChunks) {
+                    for (int x = 0; x < Math.floorDiv(img.getWidth(), 16); x++) {
+                        for (int y = 0; y < img.getHeight(); y++) {
+                            img.setRGB(x * 16, y, buildRGBA(0));
+                        }
+                    }
+                    for (int y = 0; y < Math.floorDiv(img.getHeight(), 16); y++) {
+                        for (int x = 0; x < img.getWidth(); x++) {
+                            img.setRGB(x, y * 16, buildRGBA(0));
+                        }
+                    }
+                }
+
+                String statsText = "min: " + min + "\nmax: " + max + "\nseed: " + seed + "\ntime: " + sampleTimeMs + "ms";
+                consoleLog("Rendered " + (sizeX * sizeZ) + " points in " + sampleTimeMs + "ms.");
+
+                checkCancelled();
+
+                // Step 3: Generate noise vals for 3D heightmap (block-based)
+                reportProgress(75, "3D heightmap...");
+                double[][] heightmapVals = new double[sizeX][sizeZ];
+                cancelFlag.set(false);
+                completedBlocks.set(0);
+                blocks.parallelStream().forEach(block -> {
+                    if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
+                    int blockMinWX = block[0] * BLOCK_SIZE;
+                    int blockMaxWX = blockMinWX + BLOCK_SIZE;
+                    int blockMinWZ = block[1] * BLOCK_SIZE;
+                    int blockMaxWZ = blockMinWZ + BLOCK_SIZE;
+
+                    for (int wx = blockMinWX; wx < blockMaxWX; wx += multiplier) {
+                        int px = (int) Math.round((wx - originX) / multiplier);
+                        if (px < 0 || px >= sizeX) continue;
+                        for (int wz = blockMinWZ; wz < blockMaxWZ; wz += multiplier) {
+                            int pz = (int) Math.round((wz - originZ) / multiplier);
+                            if (pz < 0 || pz >= sizeZ) continue;
+                            heightmapVals[px][pz] = sampler.getSample(seed, px * multiplier + originX, pz * multiplier + originZ);
+                        }
+                    }
+                    int done = completedBlocks.incrementAndGet();
+                    if (done % Math.max(1, totalBlocks / 10) == 0) {
+                        reportProgress(75 + (int)(done * 15.0 / totalBlocks), "3D heightmap...");
+                    }
+                });
+
+                checkCancelled();
+
+                // Step 4: Generate voxel data (if enabled)
+                boolean[][][] voxelVals = null;
+                if (voxelRes > 0) {
+                    reportProgress(92, "Voxel data...");
+                    voxelVals = new boolean[voxelRes][voxelTopY - voxelBottomY][voxelRes];
+                    final boolean[][][] fVoxelVals = voxelVals;
+                    cancelFlag.set(false);
+                    IntStream.range(0, voxelRes).parallel().forEach(x -> {
+                        if (cancelled || cancelFlag.get()) { cancelFlag.set(true); return; }
+                        for (int y = 0; y < fVoxelVals[x].length; y++) {
+                            for (int z = 0; z < fVoxelVals[x][y].length; z++) {
+                                fVoxelVals[x][y][z] = sampler.getSample(seed, x * multiplier + originX, y + voxelBottomY, z * multiplier + originZ) > 0;
+                            }
+                        }
+                    });
+                }
+
+                reportProgress(100, "Complete");
+                return new RenderResult(sampler, colorSampler, img, heightmapVals, colorNoiseVals, voxelVals,
+                        min, max, buckets, statsText, sampleTimeMs, seed, colorScale, yScale);
+            } catch (InterruptedException e) {
+                // Render was cancelled via thread interrupt
+                return null;
+            } catch (RuntimeException e) {
+                if (e.getCause() instanceof InterruptedException) {
+                    // Compilation was interrupted via cancel
+                    return null;
+                }
+                throw e;
+            }
         }
 
         @Override
         protected void done() {
             // Runs on EDT
+            statusBar.showProgress(false);
             if (cancelled || isCancelled()) {
                 return;
             }
@@ -352,6 +468,10 @@ public class NoisePanel extends JPanel {
                 Thread.currentThread().interrupt();
             } catch (ExecutionException e) {
                 Throwable cause = e.getCause();
+                if (cause instanceof InterruptedException) {
+                    // Cancelled during compilation — not an error
+                    return;
+                }
                 if (cause != null) {
                     cause.printStackTrace();
                 } else {
@@ -650,13 +770,18 @@ public class NoisePanel extends JPanel {
      * Falls back to YAML-aware map merging if text prepend fails (e.g. duplicate keys),
      * which unions map-valued keys like samplers/functions/variables.
      * In both paths, filters out unused samplers/functions for faster compilation.
+     * Prepends PerspectiveMultiplier as both a YAML anchor and a variables entry.
      */
     @SuppressWarnings("unchecked")
     private static HighAliasYamlConfiguration mergeConfigs(String commonYaml, String editorYaml,
-                                                            String configName, java.util.function.Consumer<String> logger) {
+                                                            String configName, java.util.function.Consumer<String> logger,
+                                                            int perspectiveMultiplier) {
+        // Prepend PerspectiveMultiplier anchor so samplers can reference it
+        String pmPrefix = "PerspectiveMultiplier: &PerspectiveMultiplier " + perspectiveMultiplier + "\n";
+
         boolean hasCommon = commonYaml != null && !commonYaml.trim().isEmpty();
 
-        String combined = hasCommon ? commonYaml + "\n" + editorYaml : editorYaml;
+        String combined = pmPrefix + (hasCommon ? commonYaml + "\n" + editorYaml : editorYaml);
 
         Map<String, Object> merged = null;
 
@@ -699,6 +824,18 @@ public class NoisePanel extends JPanel {
             }
         }
 
+        // Ensure PerspectiveMultiplier is in the variables map (for EXPRESSION samplers)
+        Object varsObj = merged.get("variables");
+        if (varsObj instanceof Map) {
+            ((Map<String, Object>) varsObj).putIfAbsent("PerspectiveMultiplier", perspectiveMultiplier);
+        } else {
+            Map<String, Object> vars = new LinkedHashMap<>();
+            vars.put("PerspectiveMultiplier", perspectiveMultiplier);
+            merged.put("variables", vars);
+        }
+        // Also ensure top-level key exists (for YAML anchor reference)
+        merged.putIfAbsent("PerspectiveMultiplier", perspectiveMultiplier);
+
         // Filter unused samplers/functions for faster compilation
         if (hasCommon) {
             filterUnusedEntries(merged, editorYaml, logger);
@@ -712,6 +849,28 @@ public class NoisePanel extends JPanel {
         options.setMaxAliasesForCollections(500);
         options.setCodePointLimit(16 * 1024 * 1024); // 16 MB (default is 3 MB)
         return new Yaml(options);
+    }
+
+    /**
+     * Compute the list of (blockX, blockZ) pairs covering the view window,
+     * aligned to BLOCK_SIZE world-coordinate boundaries.
+     */
+    private static List<int[]> computeViewBlocks(double originX, double originZ, int pixelsX, int pixelsZ, int multiplier) {
+        double worldMaxX = originX + (double) pixelsX * multiplier;
+        double worldMaxZ = originZ + (double) pixelsZ * multiplier;
+
+        int blockStartX = (int) Math.floor(originX / BLOCK_SIZE);
+        int blockEndX = (int) Math.floor(worldMaxX / BLOCK_SIZE);
+        int blockStartZ = (int) Math.floor(originZ / BLOCK_SIZE);
+        int blockEndZ = (int) Math.floor(worldMaxZ / BLOCK_SIZE);
+
+        List<int[]> blocks = new ArrayList<>();
+        for (int bx = blockStartX; bx <= blockEndX; bx++) {
+            for (int bz = blockStartZ; bz <= blockEndZ; bz++) {
+                blocks.add(new int[]{bx, bz});
+            }
+        }
+        return blocks;
     }
 
     private static int normal(double in, double out, double min, double max) {
@@ -786,15 +945,15 @@ public class NoisePanel extends JPanel {
         this.error.set(true);
         try {
             String commonText = this.commonTextArea.getText();
-            DummyPack pack = new DummyPack(platform, mergeConfigs(commonText, this.elevationTextArea.getText(), "Noise Config", this::consoleLog), this.advancedPanel.isUseLetExpressions());
+            int pm = this.settingsPanel.getPerspectiveMultiplier();
+            DummyPack pack = new DummyPack(platform, mergeConfigs(commonText, this.elevationTextArea.getText(), "Noise Config", this::consoleLog, pm), this.advancedPanel.isUseLetExpressions());
             this.noiseSeeded = pack.getSampler();
 
             // Compile color sampler if defined
             String colorText = this.colorTextArea.getText().trim();
             if (!colorText.isEmpty()) {
                 try {
-                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonText, colorText, "Color Config", this::consoleLog), this.advancedPanel.isUseLetExpressions());
-                    this.colorSamplerSeeded = colorPack.getSampler();
+                    DummyPack colorPack = new DummyPack(platform, mergeConfigs(commonText, colorText, "Color Config", this::consoleLog, pm), this.advancedPanel.isUseLetExpressions());
                 } catch (Exception e) {
                     consoleLog("Warning: Color sampler failed to compile: " + e.getMessage());
                     this.colorSamplerSeeded = null;
@@ -839,6 +998,9 @@ public class NoisePanel extends JPanel {
         this.freshRender.set(true);
         this.error.set(true);
 
+        // Show progress bar
+        statusBar.setProgress(0, "Starting...");
+
         // Start background render
         currentWorker = new RenderWorker();
         currentWorker.execute();
@@ -851,6 +1013,7 @@ public class NoisePanel extends JPanel {
             this.image.setText("Cancelled");
             this.freshRender.set(false);
             this.error.set(false);
+            statusBar.showProgress(false);
         }
     }
 
@@ -878,9 +1041,20 @@ public class NoisePanel extends JPanel {
         int multiplier = this.settingsPanel.getPerspectiveMultiplier();
 
         double[][] noiseVals = new double[sizeX][sizeZ];
-        IntStream.range(0, sizeX).parallel().forEach(x -> {
-            for (int z = 0; z < sizeZ; z++) {
-                noiseVals[x][z] = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+        List<int[]> blocks = computeViewBlocks(originX, originZ, sizeX, sizeZ, multiplier);
+        blocks.parallelStream().forEach(block -> {
+            int blockMinWX = block[0] * BLOCK_SIZE;
+            int blockMaxWX = blockMinWX + BLOCK_SIZE;
+            int blockMinWZ = block[1] * BLOCK_SIZE;
+            int blockMaxWZ = blockMinWZ + BLOCK_SIZE;
+            for (int wx = blockMinWX; wx < blockMaxWX; wx += multiplier) {
+                int px = (int) Math.round((wx - originX) / multiplier);
+                if (px < 0 || px >= sizeX) continue;
+                for (int wz = blockMinWZ; wz < blockMaxWZ; wz += multiplier) {
+                    int pz = (int) Math.round((wz - originZ) / multiplier);
+                    if (pz < 0 || pz >= sizeZ) continue;
+                    noiseVals[px][pz] = noiseSeeded.getSample(seed, px * multiplier + originX, pz * multiplier + originZ);
+                }
             }
         });
         return noiseVals;
@@ -914,9 +1088,20 @@ public class NoisePanel extends JPanel {
         int multiplier = this.settingsPanel.getPerspectiveMultiplier();
 
         double[][] colorVals = new double[sizeX][sizeZ];
-        IntStream.range(0, sizeX).parallel().forEach(x -> {
-            for (int z = 0; z < sizeZ; z++) {
-                colorVals[x][z] = colorSamplerSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+        List<int[]> blocks = computeViewBlocks(originX, originZ, sizeX, sizeZ, multiplier);
+        blocks.parallelStream().forEach(block -> {
+            int blockMinWX = block[0] * BLOCK_SIZE;
+            int blockMaxWX = blockMinWX + BLOCK_SIZE;
+            int blockMinWZ = block[1] * BLOCK_SIZE;
+            int blockMaxWZ = blockMinWZ + BLOCK_SIZE;
+            for (int wx = blockMinWX; wx < blockMaxWX; wx += multiplier) {
+                int px = (int) Math.round((wx - originX) / multiplier);
+                if (px < 0 || px >= sizeX) continue;
+                for (int wz = blockMinWZ; wz < blockMaxWZ; wz += multiplier) {
+                    int pz = (int) Math.round((wz - originZ) / multiplier);
+                    if (pz < 0 || pz >= sizeZ) continue;
+                    colorVals[px][pz] = colorSamplerSeeded.getSample(seed, px * multiplier + originX, pz * multiplier + originZ);
+                }
             }
         });
         return colorVals;
@@ -933,10 +1118,22 @@ public class NoisePanel extends JPanel {
         BufferedImage image = new BufferedImage(sizeX, sizeY, BufferedImage.TYPE_INT_ARGB);
         double[][] noiseVals = new double[sizeX][sizeY];
 
+        List<int[]> blocks = computeViewBlocks(originX, originZ, sizeX, sizeY, multiplier);
+
         long startTime = System.nanoTime();
-        IntStream.range(0, sizeX).parallel().forEach(x -> {
-            for (int z = 0; z < sizeY; z++) {
-                noiseVals[x][z] = noiseSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+        blocks.parallelStream().forEach(block -> {
+            int blockMinWX = block[0] * BLOCK_SIZE;
+            int blockMaxWX = blockMinWX + BLOCK_SIZE;
+            int blockMinWZ = block[1] * BLOCK_SIZE;
+            int blockMaxWZ = blockMinWZ + BLOCK_SIZE;
+            for (int wx = blockMinWX; wx < blockMaxWX; wx += multiplier) {
+                int px = (int) Math.round((wx - originX) / multiplier);
+                if (px < 0 || px >= sizeX) continue;
+                for (int wz = blockMinWZ; wz < blockMaxWZ; wz += multiplier) {
+                    int pz = (int) Math.round((wz - originZ) / multiplier);
+                    if (pz < 0 || pz >= sizeY) continue;
+                    noiseVals[px][pz] = noiseSeeded.getSample(seed, px * multiplier + originX, pz * multiplier + originZ);
+                }
             }
         });
         long endTime = System.nanoTime();
@@ -958,9 +1155,19 @@ public class NoisePanel extends JPanel {
         if (colorSamplerSeeded != null) {
             colorSource = new double[sizeX][sizeY];
             final double[][] fColorSource = colorSource;
-            IntStream.range(0, sizeX).parallel().forEach(x -> {
-                for (int z = 0; z < sizeY; z++) {
-                    fColorSource[x][z] = colorSamplerSeeded.getSample(seed, x * multiplier + originX, z * multiplier + originZ);
+            blocks.parallelStream().forEach(block -> {
+                int blockMinWX = block[0] * BLOCK_SIZE;
+                int blockMaxWX = blockMinWX + BLOCK_SIZE;
+                int blockMinWZ = block[1] * BLOCK_SIZE;
+                int blockMaxWZ = blockMinWZ + BLOCK_SIZE;
+                for (int wx = blockMinWX; wx < blockMaxWX; wx += multiplier) {
+                    int px = (int) Math.round((wx - originX) / multiplier);
+                    if (px < 0 || px >= sizeX) continue;
+                    for (int wz = blockMinWZ; wz < blockMaxWZ; wz += multiplier) {
+                        int pz = (int) Math.round((wz - originZ) / multiplier);
+                        if (pz < 0 || pz >= sizeY) continue;
+                        fColorSource[px][pz] = colorSamplerSeeded.getSample(seed, px * multiplier + originX, pz * multiplier + originZ);
+                    }
                 }
             });
             colorMin = Double.MAX_VALUE;

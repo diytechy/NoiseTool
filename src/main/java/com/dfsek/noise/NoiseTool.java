@@ -231,6 +231,17 @@ public final class NoiseTool extends JFrame implements SearchListener {
 
         this.noise = new NoisePanel(elevationTextArea, commonTextArea, colorTextArea, noise3d, noise3dVox, distributionPanel, settingsPanel, advancedPanel, platform, statusBar);
 
+        // Global Escape key dispatcher — ensures cancel works even when focus is in the text editor
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
+            if (e.getID() == KeyEvent.KEY_PRESSED && e.getKeyCode() == KeyEvent.VK_ESCAPE) {
+                if (noise.isRendering()) {
+                    noise.cancelRender();
+                    return true; // consume the event
+                }
+            }
+            return false;
+        });
+
         // Console setup
         sysout = new JTextArea();
         sysout.setEditable(false);

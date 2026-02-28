@@ -164,6 +164,10 @@ public class DummyPack implements ConfigPack {
                     List<String> ordered = topologicalSort(samplerConfigs);
                     logger.info("Loading {} pack samplers in dependency order", ordered.size());
                     for (String name : ordered) {
+                        // Check for thread interruption to support cancellation during compilation
+                        if (Thread.interrupted()) {
+                            throw new InterruptedException("Compilation cancelled");
+                        }
                         Map<String, Object> singleSampler = new LinkedHashMap<>();
                         singleSampler.put(name, samplerConfigs.get(name));
                         Map<String, Object> miniMap = new LinkedHashMap<>();
@@ -173,6 +177,9 @@ public class DummyPack implements ConfigPack {
                         samplerMap.putAll((Map<String, Object>) getTemplateSamplers.invoke(miniTemplate));
                     }
                     logger.info("All pack samplers loaded successfully");
+                } catch (InterruptedException e) {
+                    // Re-throw so cancellation propagates to the caller
+                    throw new RuntimeException(e);
                 } catch (Exception e) {
                     logger.error("Sequential sampler loading failed", e);
                 }
