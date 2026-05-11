@@ -39,6 +39,13 @@ repositories {
     }
 }
 
+// Force the patched Seismic version to win over the seismic:2.5.7 brought in transitively by Terra.
+// Maven version ordering treats "2.5.7-PATCHED" as a pre-release (lower) than "2.5.7", so without
+// this force Gradle would downgrade to the unpatched release.
+configurations.all {
+    resolutionStrategy.force("com.dfsek:seismic:2.5.7-PATCHED")
+}
+
 val terraGitHash = "ab245b090"
 
 val terraAddon: Configuration by configurations.creating
