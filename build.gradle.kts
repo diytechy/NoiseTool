@@ -18,6 +18,10 @@ repositories {
         url = uri("https://repo.repsy.io/mvn/diytechy/dendryterra")
     }
     maven {
+        name = "Repsy-Seismic"
+        url = uri("https://repo.repsy.io/mvn/diytechy/seismic")
+    }
+    maven {
         name = "Solo Studios"
         url = uri("https://maven.solo-studios.ca/releases")
     }
@@ -56,7 +60,7 @@ gradle.taskGraph.whenReady {
 dependencies {
     testImplementation("org.junit.jupiter", "junit-jupiter", "5.13.0")
     testRuntimeOnly("org.junit.platform", "junit-platform-launcher")
-    implementation("com.dfsek:seismic:2.5.7")
+    implementation("com.dfsek:seismic:2.5.7-PATCHED")
     implementation("com.dfsek.terra:api:7.0.0-BETA-$terraGitHash")
     implementation("com.dfsek.terra:base:7.0.0-BETA-$terraGitHash")
 
