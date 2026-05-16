@@ -7,21 +7,15 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class NoiseSettingsPanel extends JPanel {
-    private final JSpinner seedSpinner = new JSpinner(new SpinnerNumberModel(2403, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
-    private final JSpinner xOrigin = new JSpinner(new SpinnerNumberModel(0, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
-    private final JSpinner zOrigin = new JSpinner(new SpinnerNumberModel(0, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
-    private final JSpinner perspectiveMultiplier = new JSpinner(new SpinnerNumberModel(1, 1, 100, 1));
-
-    private final JCheckBox useLetExpressions = new JCheckBox();
-
-    // Voxel preview settings
-    private final JSpinner voxelResolution = new JSpinner(new SpinnerNumberModel(128, 0, Integer.MAX_VALUE, 1));
-    private final JSpinner voxelBottomY = new JSpinner(new SpinnerNumberModel(-64, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
-    private final JSpinner voxelTopY = new JSpinner(new SpinnerNumberModel(319, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
+    private final JSpinner seedSpinner;
+    private final JSpinner xOrigin;
+    private final JSpinner zOrigin;
+    private final JSpinner perspectiveMultiplier;
 
     // Color scale presets
     private final ColorScale customColorScalePreset = new ColorScale("Custom", false, (float[][]) null);
@@ -37,12 +31,27 @@ public class NoiseSettingsPanel extends JPanel {
     private ColorScale customColorScale;
 
     // Color scale settings
-    private final JComboBox<ColorScale> colorScalePresets = new JComboBox<>(presets);
-    private final JCheckBox colorScaleNormalized = new JCheckBox();
-    private final JTextArea colorScaleEditor = new JTextArea();
+    private final JComboBox<ColorScale> colorScalePresets;
+    private final JCheckBox colorScaleNormalized;
+    private final JTextArea colorScaleEditor;
 
-    public NoiseSettingsPanel() {
+    public NoiseSettingsPanel(Properties settings) {
         super(new SpringLayout());
+
+        int seed = Integer.parseInt(settings.getProperty("seed", "2403"));
+        double origX = Double.parseDouble(settings.getProperty("originX", "0"));
+        double origZ = Double.parseDouble(settings.getProperty("originZ", "0"));
+        int perspMult = Integer.parseInt(settings.getProperty("perspectiveMultiplier", "20"));
+
+        seedSpinner = new JSpinner(new SpinnerNumberModel(seed, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
+        xOrigin = new JSpinner(new SpinnerNumberModel(origX, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
+        zOrigin = new JSpinner(new SpinnerNumberModel(origZ, Integer.MIN_VALUE, Integer.MAX_VALUE, 1));
+        perspectiveMultiplier = new JSpinner(new SpinnerNumberModel(perspMult, 1, 100, 1));
+
+        colorScalePresets = new JComboBox<>(presets);
+        colorScaleNormalized = new JCheckBox();
+        colorScaleEditor = new JTextArea();
+
         add(new JLabel("Seed: "));
         add(seedSpinner);
         add(new JLabel("X Origin: "));
@@ -53,27 +62,46 @@ public class NoiseSettingsPanel extends JPanel {
         add(new JLabel("Perspective Multiplier: "));
         add(perspectiveMultiplier);
 
-        add(new JLabel("Use Let Expressions: "));
-        add(useLetExpressions);
-
-        add(new JLabel("Voxel preview resolution: "));
-        add(voxelResolution);
-
-        add(new JLabel("Voxel preview bottom Y: "));
-        add(voxelBottomY);
-        add(new JLabel("Voxel preview top Y: "));
-        add(voxelTopY);
-
         add(new JLabel("Color scale preset: "));
-        colorScalePresets.setSelectedItem(ColorScale.GRAYSCALE_NORMALIZED);
+
+        // Restore color scale preset from settings
+        String presetName = settings.getProperty("colorScalePreset", "Grayscale normalized");
+        ColorScale selectedPreset = ColorScale.GRAYSCALE_NORMALIZED;
+        for (ColorScale p : presets) {
+            if (p != customColorScalePreset && p.getName().equals(presetName)) {
+                selectedPreset = p;
+                break;
+            }
+        }
+        // Check if custom was saved
+        if ("Custom".equals(presetName)) {
+            String customText = settings.getProperty("colorScaleText", "");
+            boolean customNorm = Boolean.parseBoolean(settings.getProperty("colorScaleNormalized", "false"));
+            if (!customText.isEmpty()) {
+                try {
+                    customColorScale = new ColorScale("Custom", customNorm, customText);
+                    selectedPreset = customColorScalePreset;
+                } catch (Exception e) {
+                    // fallback to default
+                }
+            }
+        }
+
+        colorScalePresets.setSelectedItem(selectedPreset);
         add(colorScalePresets);
 
-        colorScaleNormalized.setSelected(((ColorScale) colorScalePresets.getSelectedItem()).getNormalized());
+        boolean norm = selectedPreset == customColorScalePreset && customColorScale != null
+                ? customColorScale.getNormalized()
+                : selectedPreset.getNormalized();
+        colorScaleNormalized.setSelected(norm);
         add(new JLabel("Color scale normalization: "));
         add(colorScaleNormalized);
 
         colorScaleEditor.setRows(10);
-        colorScaleEditor.setText(((ColorScale) colorScalePresets.getSelectedItem()).getScaleAsText());
+        String scaleText = selectedPreset == customColorScalePreset && customColorScale != null
+                ? customColorScale.getScaleAsText()
+                : selectedPreset.getScaleAsText();
+        colorScaleEditor.setText(scaleText);
         add(new JLabel("Color scale: "));
         add(new JScrollPane(colorScaleEditor));
 
@@ -120,10 +148,12 @@ public class NoiseSettingsPanel extends JPanel {
             }
         });
 
-        SwingUtils.makeCompactGrid(this, 11, 2, 10, 10, 10, 10);
-
+        SwingUtils.makeCompactGrid(this, 7, 2, 10, 10, 10, 10);
     }
 
+    public NoiseSettingsPanel() {
+        this(new Properties());
+    }
 
     public int getSeed() {
         return ((Number) seedSpinner.getValue()).intValue();
@@ -149,22 +179,6 @@ public class NoiseSettingsPanel extends JPanel {
         return ((Number) perspectiveMultiplier.getValue()).intValue();
     }
 
-    public boolean isUseLetExpressions() {
-        return useLetExpressions.isSelected();
-    }
-
-    public int getVoxelResolution() {
-        return ((Number) voxelResolution.getValue()).intValue();
-    }
-
-    public int getVoxelBottomY() {
-        return ((Number) voxelBottomY.getValue()).intValue();
-    }
-
-    public int getVoxelTopY() {
-        return ((Number) voxelTopY.getValue()).intValue();
-    }
-
     public ColorScale getColorScale() {
         ColorScale selection = (ColorScale) colorScalePresets.getSelectedItem();
         if (selection == customColorScalePreset) {
@@ -173,5 +187,18 @@ public class NoiseSettingsPanel extends JPanel {
         else {
             return selection;
         }
+    }
+
+    public String getColorScalePresetName() {
+        ColorScale selection = (ColorScale) colorScalePresets.getSelectedItem();
+        return selection.getName();
+    }
+
+    public boolean isColorScaleNormalized() {
+        return colorScaleNormalized.isSelected();
+    }
+
+    public String getColorScaleText() {
+        return colorScaleEditor.getText();
     }
 }

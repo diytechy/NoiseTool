@@ -4,6 +4,7 @@ import com.dfsek.noise.NoiseTool;
 import org.apache.commons.io.IOUtils;
 
 import javax.swing.*;
+import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.io.File;
 import java.io.FileInputStream;
@@ -21,14 +22,38 @@ public class OpenFileAction extends AbstractAction {
 
     @Override
     public void actionPerformed(ActionEvent actionEvent) {
-        int returnVal = noiseTool.getFileChooser().showOpenDialog(noiseTool);
+        File selectedFile = null;
 
-        if(returnVal == JFileChooser.APPROVE_OPTION) {
-            File file = noiseTool.getFileChooser().getSelectedFile();
-            System.out.println("Opening " + file.getAbsolutePath());
+        if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
+            // Use native Windows file dialog for quick links and navigation
+            FileDialog fd = new FileDialog(noiseTool, "Open File", FileDialog.LOAD);
+            File lastFile = noiseTool.getFileChooser().getSelectedFile();
+            if (lastFile != null && lastFile.getParentFile() != null) {
+                fd.setDirectory(lastFile.getParentFile().getAbsolutePath());
+            }
+            fd.setVisible(true);
+
+            String fileName = fd.getFile();
+            String dirName = fd.getDirectory();
+            if (fileName != null && dirName != null) {
+                selectedFile = new File(dirName, fileName);
+                // Keep JFileChooser in sync for Save action
+                noiseTool.getFileChooser().setSelectedFile(selectedFile);
+            }
+        } else {
+            // Use Swing file chooser on non-Windows
+            int returnVal = noiseTool.getFileChooser().showOpenDialog(noiseTool);
+            if (returnVal == JFileChooser.APPROVE_OPTION) {
+                selectedFile = noiseTool.getFileChooser().getSelectedFile();
+            }
+        }
+
+        if (selectedFile != null) {
+            System.out.println("Opening " + selectedFile.getAbsolutePath());
             try {
-                noiseTool.getTextArea().setText(IOUtils.toString(new FileInputStream(file), Charset.defaultCharset()));
-            } catch(IOException e) {
+                noiseTool.getTextArea().setText(IOUtils.toString(new FileInputStream(selectedFile), Charset.defaultCharset()));
+                noiseTool.setLastOpenedFile(selectedFile);
+            } catch (IOException e) {
                 e.printStackTrace();
             }
         } else {
