@@ -22,6 +22,10 @@ repositories {
         url = uri("https://repo.repsy.io/mvn/diytechy/seismic")
     }
     maven {
+        name = "Repsy-Tectonic"
+        url = uri("https://repo.repsy.io/mvn/diytechy/tectonic")
+    }
+    maven {
         name = "Solo Studios"
         url = uri("https://maven.solo-studios.ca/releases")
     }
@@ -44,9 +48,11 @@ repositories {
 // this force Gradle would downgrade to the unpatched release.
 configurations.all {
     resolutionStrategy.force("com.dfsek:seismic:2.5.7-PATCHED")
+    resolutionStrategy.force("com.dfsek.tectonic:yaml:4.3.2-diytechy")
+    resolutionStrategy.force("com.dfsek.tectonic:common:4.3.2-diytechy")
 }
 
-val terraGitHash = "ab245b090"
+val terraGitHash = "c55b0ff"
 
 val terraAddon: Configuration by configurations.creating
 val bootstrapTerraAddon: Configuration by configurations.creating
@@ -77,13 +83,13 @@ dependencies {
     // Terra addons for noise configuration
     terraAddon("com.dfsek.terra:config-noise-function:1.2.0-BETA-$terraGitHash")
     terraAddon("com.dfsek.terra:library-image:1.1.0-BETA-$terraGitHash")
-    terraAddon("com.github.diytechy:dendryterra:1.0.0-BETA-1")
+    terraAddon("com.github.diytechy:dendryterra:1.0.0-BETA-G")
 
     compileOnly("org.jetbrains:annotations:26.0.2")
     implementation("commons-io:commons-io:2.19.0")
     implementation("com.google.guava:guava:33.4.8-jre")
 
-    implementation("com.dfsek.tectonic", "yaml", "4.2.1")
+    implementation("com.dfsek.tectonic", "yaml", "4.3.2-diytechy")
     implementation("ch.qos.logback:logback-classic:1.5.18")
 
 
@@ -137,6 +143,9 @@ tasks.build {
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(25))
+    }
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
 }
