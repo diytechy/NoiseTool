@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.dfsek"
-version = "1.2.2"
+version = "2.0.0-diytechy"
 
 repositories {
     mavenLocal()  // Check local ~/.m2 first (use publish_to_maven_local.bat in Terra to populate)
