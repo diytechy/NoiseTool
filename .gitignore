@@ -251,3 +251,4 @@ platforms/**/run/**
 
 #Vale Config File
 **/.vale.ini
+build-output.txt
