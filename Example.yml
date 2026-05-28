@@ -1,0 +1,42 @@
+type: EXPRESSION
+expression: dendrysampler(x,1.0,z)
+expression: dendrysampler(x,0.0,z)
+samplers:
+  dendrysampler:
+    dimensions: 3
+    type: DENDRY
+    n: 3                   # Resolution levels (1-5)
+    epsilon: 0              # Point distribution bias [0, 0.5)
+    delta: 0.05             # Segment displacement
+    #cachepixels: 5.1
+    return: 
+    slope: 0.001              # Valley/cliff factor
+    gridsize: 2000      # Grid scaling (2000)
+    curvature: 1.0
+    #default-riverwidth: 6
+    max-segments-per-level: 500
+    tangent-angle: 38
+    #tangent-angle: 0
+    #39
+    constellation-scale: 1
+    lowest-slope-cutoff: -1000
+    sampler:                # Optional control function
+      type: PROBABILITY
+      sampler:
+        type: OPEN_SIMPLEX_2
+        frequency: 0.0001
+    branches:               # Optional control function
+      dimensions: 2
+      type: EXPRESSION
+      expression: SetSamp(x,z)+1
+      samplers:
+        SetSamp:
+          dimensions: 2
+          type: OPEN_SIMPLEX_2
+          frequency: 0.01
+
+#type: PERLIN
+#frequency: 0.001
+#distance: Euclidean
+#return: Distance2Div
+
