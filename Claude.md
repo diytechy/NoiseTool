@@ -256,3 +256,29 @@ Make a plan to update the NoiseTool with some additional functionality:
 2. When rendering, if not performed already, render "blocks" or "cells" of pixels within a 256x256 world coordinate (omitting any that are outside the view window, specifically as it should improve processing for the Dendry noise sampler and the way it caches sampler points.
 3. Each time before combining / parsing YAML files for subsequent compilation of samplers, create an anchor at the top with the name PerspectiveMultiplier, Set it's value equal to the current "Perspective Multiplier" so it can be aliased by other samplers as this greatly affects rendering speed.
 4. Sometimes escape does not appear to work, escape ideally would interrupt all tasks (noise compilation / any active render streams).
+
+############################################################
+
+## Changes: Headless CLI rendering (May 2026)
+
+**Files:** `cli/HeadlessRenderer.java` (new), `NoiseTool.java` (main routing),
+`NoisePanel.java` (`mergeConfigs` made `public static`), `RenderNoise.bat` (new launcher).
+
+Adds a no-GUI batch render path so the tool can be invoked from the command line — to
+generate the CHIMERA support-documentation screenshots and to let an automated agent
+validate sampler YAML and read back compile errors without a window.
+
+**Trigger:** `--headless` (or `--cli`) as the first arg to `main()`; routes to
+`HeadlessRenderer.run(...)` and `System.exit`s with the result code before any Swing init.
+
+**Interface:** `--in/--elevation`, `--out`, `--common`, `--color`, `--seed`, `--size WxH`,
+`--origin x,z`, `--multiplier`, `--color-scale <preset|alias|file>`, `--normalize`, `--let`,
+`--log`, `--help`. Reuses `NoisePanel.mergeConfigs` (PerspectiveMultiplier anchor + unused-
+sampler filtering) and `DummyPack` exactly as the GUI does, then samples a grid in parallel
+and writes a PNG via `ImageIO`. Color uses the same `ColorScale.valueToIRgb` path.
+
+**Exit codes:** 0 = ok, 1 = compile/render error (stack trace to stderr + `--log`), 2 = usage.
+
+**Validated:** FBM + OPEN_SIMPLEX_2 renders; error YAML returns 1; missing args return 2;
+`--common C:\Projects\CHIMERA\.artifacts\resolved_samplers.yml --in (expression: temperature(x,z))`
+filtered 25/197 samplers and rendered the temperature climate field.

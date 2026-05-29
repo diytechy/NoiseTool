@@ -773,7 +773,7 @@ public class NoisePanel extends JPanel {
      * Prepends PerspectiveMultiplier as both a YAML anchor and a variables entry.
      */
     @SuppressWarnings("unchecked")
-    private static HighAliasYamlConfiguration mergeConfigs(String commonYaml, String editorYaml,
+    public static HighAliasYamlConfiguration mergeConfigs(String commonYaml, String editorYaml,
                                                             String configName, java.util.function.Consumer<String> logger,
                                                             int perspectiveMultiplier) {
         // Prepend PerspectiveMultiplier anchor so samplers can reference it

@@ -335,6 +335,13 @@ public final class NoiseTool extends JFrame implements SearchListener {
     }
 
     public static void main(String[] args) {
+        // Headless batch mode: render a sampler to a PNG without opening the GUI.
+        // Triggered by passing --headless (or --cli) as the first argument. Used for
+        // generating documentation screenshots and for automated sampler validation.
+        if (args.length > 0 && (args[0].equals("--headless") || args[0].equals("--cli"))) {
+            String[] rest = java.util.Arrays.copyOfRange(args, 1, args.length);
+            System.exit(com.dfsek.noise.cli.HeadlessRenderer.run(rest));
+        }
         SwingUtilities.invokeLater(() -> {
             try {
                 UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
