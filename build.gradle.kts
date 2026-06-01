@@ -83,7 +83,7 @@ dependencies {
     // Terra addons for noise configuration
     terraAddon("com.dfsek.terra:config-noise-function:1.2.0-BETA-$terraGitHash")
     terraAddon("com.dfsek.terra:library-image:1.1.0-BETA-$terraGitHash")
-    terraAddon("com.github.diytechy:dendryterra:1.0.0-BETA-G")
+    terraAddon("com.github.diytechy:dendryterra:1.0.0-BETA-J")
 
     compileOnly("org.jetbrains:annotations:26.0.2")
     implementation("commons-io:commons-io:2.19.0")

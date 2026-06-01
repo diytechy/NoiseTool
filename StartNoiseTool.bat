@@ -65,18 +65,26 @@ if defined VERSION_ERROR (
 
 echo  Using Java !MAJOR! from: !JAVA_EXE!
 
-:: ── 4. Copy local DendryTerra build if available ─────────────────────────────
+:: ── 4. Resolve working directory (where addons/ lives) ───────────────────────
+:: NoiseTool loads addons/ relative to the working directory. It lives
+:: alongside the JAR — in the project root for releases, or in build\libs\
+:: for dev builds. Always cd to the JAR's own directory.
+for %%F in ("%JAR_FILE%") do set "WORK_DIR=%%~dpF"
+
+:: ── 5. Copy local DendryTerra build if available ─────────────────────────────
 if exist "%SCRIPT_DIR%..\DendryTerra\build\libs\DendryTerra-1.0.0-BETA-*.jar" (
-    del /Q "%SCRIPT_DIR%addons\DendryTerra*.jar" 2>nul
-    copy /Y "%SCRIPT_DIR%..\DendryTerra\build\libs\DendryTerra-1.0.0-BETA-*.jar" "%SCRIPT_DIR%addons\" >nul
+    if not exist "%WORK_DIR%addons\" mkdir "%WORK_DIR%addons" 2>nul
+    del /Q "%WORK_DIR%addons\DendryTerra*.jar" 2>nul
+    copy /Y "%SCRIPT_DIR%..\DendryTerra\build\libs\DendryTerra-1.0.0-BETA-*.jar" "%WORK_DIR%addons\" >nul
     echo  Loaded local DendryTerra build.
 )
 
-:: ── 5. Launch ────────────────────────────────────────────────────────────────
+:: ── 6. Launch ────────────────────────────────────────────────────────────────
 echo  Launching: %JAR_FILE%
+echo  Working dir: %WORK_DIR%
 echo.
-cd /d "%SCRIPT_DIR%"
-"%JAVA_EXE%" -jar "%JAR_FILE%"
+cd /d "%WORK_DIR%"
+"%JAVA_EXE%" -jar "%JAR_FILE%" %*
 
 if %errorlevel% neq 0 (
     echo.
